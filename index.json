@@ -689,10 +689,10 @@
   {
     "name": "Aniyomi: ArabsHentai",
     "pkg": "eu.kanade.tachiyomi.animeextension.ar.arabshentai",
-    "apk": "aniyomi-ar.arabshentai-v14.1.apk",
+    "apk": "aniyomi-ar.arabshentai-v14.7.apk",
     "lang": "ar",
-    "code": 1,
-    "version": "14.1",
+    "code": 7,
+    "version": "14.7",
     "nsfw": 1,
     "sources": [
       {
@@ -801,6 +801,23 @@
         "name": "فاصل اعلاني",
         "lang": "ar",
         "id": "1378291029586884571",
+        "baseUrl": ""
+      }
+    ]
+  },
+  {
+    "name": "Aniyomi: NxxHentai",
+    "pkg": "eu.kanade.tachiyomi.animeextension.ar.nxxhentai",
+    "apk": "aniyomi-ar.nxxhentai-v14.6.apk",
+    "lang": "ar",
+    "code": 6,
+    "version": "14.6",
+    "nsfw": 1,
+    "sources": [
+      {
+        "name": "NxxHentai",
+        "lang": "ar",
+        "id": "0",
         "baseUrl": ""
       }
     ]
