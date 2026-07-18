@@ -263,10 +263,10 @@
   {
     "name": "Aniyomi: MissAV",
     "pkg": "eu.kanade.tachiyomi.animeextension.all.missav",
-    "apk": "aniyomi-all.missav-v14.25.apk",
+    "apk": "aniyomi-all.missav-v14.26.apk",
     "lang": "all",
-    "code": 25,
-    "version": "14.25",
+    "code": 26,
+    "version": "14.26",
     "nsfw": 1,
     "sources": [
       {
@@ -331,10 +331,10 @@
   {
     "name": "Aniyomi: PornHub",
     "pkg": "eu.kanade.tachiyomi.animeextension.all.pornhub",
-    "apk": "aniyomi-all.pornhub-v14.2.apk",
+    "apk": "aniyomi-all.pornhub-v14.3.apk",
     "lang": "all",
-    "code": 2,
-    "version": "14.2",
+    "code": 3,
+    "version": "14.3",
     "nsfw": 1,
     "sources": [
       {
@@ -468,10 +468,10 @@
   {
     "name": "Aniyomi: SupJav",
     "pkg": "eu.kanade.tachiyomi.animeextension.all.supjav",
-    "apk": "aniyomi-all.supjav-v14.29.apk",
+    "apk": "aniyomi-all.supjav-v14.30.apk",
     "lang": "all",
-    "code": 29,
-    "version": "14.29",
+    "code": 30,
+    "version": "14.30",
     "nsfw": 1,
     "sources": [
       {
@@ -519,10 +519,10 @@
   {
     "name": "Aniyomi: Xnxx",
     "pkg": "eu.kanade.tachiyomi.animeextension.all.xnxx",
-    "apk": "aniyomi-all.xnxx-v14.5.apk",
+    "apk": "aniyomi-all.xnxx-v14.6.apk",
     "lang": "all",
-    "code": 5,
-    "version": "14.5",
+    "code": 6,
+    "version": "14.6",
     "nsfw": 1,
     "sources": [
       {
@@ -536,10 +536,10 @@
   {
     "name": "Aniyomi: Xvideos",
     "pkg": "eu.kanade.tachiyomi.animeextension.all.xvideos",
-    "apk": "aniyomi-all.xvideos-v14.5.apk",
+    "apk": "aniyomi-all.xvideos-v14.7.apk",
     "lang": "all",
-    "code": 5,
-    "version": "14.5",
+    "code": 7,
+    "version": "14.7",
     "nsfw": 1,
     "sources": [
       {
@@ -1131,10 +1131,10 @@
   {
     "name": "Aniyomi: hanime.tv",
     "pkg": "eu.kanade.tachiyomi.animeextension.en.hanime",
-    "apk": "aniyomi-en.hanime-v14.22.apk",
+    "apk": "aniyomi-en.hanime-v14.23.apk",
     "lang": "en",
-    "code": 22,
-    "version": "14.22",
+    "code": 23,
+    "version": "14.23",
     "nsfw": 1,
     "sources": [
       {
