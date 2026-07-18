@@ -689,10 +689,10 @@
   {
     "name": "Aniyomi: ArabsHentai",
     "pkg": "eu.kanade.tachiyomi.animeextension.ar.arabshentai",
-    "apk": "aniyomi-ar.arabshentai-v14.9.apk",
+    "apk": "aniyomi-ar.arabshentai-v14.10.apk",
     "lang": "ar",
-    "code": 9,
-    "version": "14.9",
+    "code": 10,
+    "version": "14.10",
     "nsfw": 1,
     "sources": [
       {
@@ -808,10 +808,10 @@
   {
     "name": "Aniyomi: NxxHentai",
     "pkg": "eu.kanade.tachiyomi.animeextension.ar.nxxhentai",
-    "apk": "aniyomi-ar.nxxhentai-v14.8.apk",
+    "apk": "aniyomi-ar.nxxhentai-v14.9.apk",
     "lang": "ar",
-    "code": 8,
-    "version": "14.8",
+    "code": 9,
+    "version": "14.9",
     "nsfw": 1,
     "sources": [
       {
