@@ -187,6 +187,13 @@
         return apkPath; // relative
       }
 
+      function iconHref(pkg) {
+        if (!pkg) return "";
+        const rel = "icon/" + pkg + ".png";
+        if (base) return base + "/" + rel;
+        return rel;
+      }
+
       function render() {
         const q = document.getElementById("filter-q").value.trim().toLowerCase();
         const lang = document.getElementById("filter-lang").value;
@@ -215,12 +222,20 @@
               ? '<span class="badge badge-nsfw">NSFW</span>'
               : "";
             const href = apkHref(e.apk);
+            const icon = iconHref(e.pkg);
+            const img = icon
+              ? '<img class="ext-icon" src="' +
+                escapeAttr(icon) +
+                '" alt="" width="28" height="28" loading="lazy" onerror="this.style.visibility=\'hidden\'" />'
+              : "";
             return (
               "<tr>" +
-              "<td>" +
+              '<td class="name-cell">' +
+              img +
+              '<span class="name-text">' +
               escapeHtml(short) +
               nsfwBadge +
-              "</td>" +
+              "</span></td>" +
               '<td><span class="badge badge-lang">' +
               escapeHtml(e.lang || "?") +
               "</span></td>" +
