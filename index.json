@@ -551,6 +551,23 @@
     ]
   },
   {
+    "name": "Aniyomi: Aflamk1",
+    "pkg": "eu.kanade.tachiyomi.animeextension.ar.aflamk1",
+    "apk": "aniyomi-ar.aflamk1-v14.1.apk",
+    "lang": "ar",
+    "code": 1,
+    "version": "14.1",
+    "nsfw": 1,
+    "sources": [
+      {
+        "name": "Aflamk1",
+        "lang": "ar",
+        "id": "4856704494266944119",
+        "baseUrl": "https://www.aflamk1.net"
+      }
+    ]
+  },
+  {
     "name": "Aniyomi: Anime4up",
     "pkg": "eu.kanade.tachiyomi.animeextension.ar.anime4up",
     "apk": "aniyomi-ar.anime4up-v14.78.apk",
@@ -670,6 +687,57 @@
     ]
   },
   {
+    "name": "Aniyomi: ArabsHentai",
+    "pkg": "eu.kanade.tachiyomi.animeextension.ar.arabshentai",
+    "apk": "aniyomi-ar.arabshentai-v14.1.apk",
+    "lang": "ar",
+    "code": 1,
+    "version": "14.1",
+    "nsfw": 1,
+    "sources": [
+      {
+        "name": "ArabsHentai",
+        "lang": "ar",
+        "id": "8204483525307465141",
+        "baseUrl": "https://arabshentai.net"
+      }
+    ]
+  },
+  {
+    "name": "Aniyomi: ArabX",
+    "pkg": "eu.kanade.tachiyomi.animeextension.ar.arabx",
+    "apk": "aniyomi-ar.arabx-v14.1.apk",
+    "lang": "ar",
+    "code": 1,
+    "version": "14.1",
+    "nsfw": 1,
+    "sources": [
+      {
+        "name": "ArabX",
+        "lang": "ar",
+        "id": "4503445597345098753",
+        "baseUrl": "https://www.arabx.cam"
+      }
+    ]
+  },
+  {
+    "name": "Aniyomi: ArabXN",
+    "pkg": "eu.kanade.tachiyomi.animeextension.ar.arabxn",
+    "apk": "aniyomi-ar.arabxn-v14.1.apk",
+    "lang": "ar",
+    "code": 1,
+    "version": "14.1",
+    "nsfw": 1,
+    "sources": [
+      {
+        "name": "ArabXN",
+        "lang": "ar",
+        "id": "2562927289454224755",
+        "baseUrl": "https://www.arabxn.com"
+      }
+    ]
+  },
+  {
     "name": "Aniyomi: asia2tv",
     "pkg": "eu.kanade.tachiyomi.animeextension.ar.asia2tv",
     "apk": "aniyomi-ar.asia2tv-v14.35.apk",
@@ -751,6 +819,40 @@
         "lang": "ar",
         "id": "2275740574829569178",
         "baseUrl": "https://ww3.okanime.xyz"
+      }
+    ]
+  },
+  {
+    "name": "Aniyomi: SexAlArab",
+    "pkg": "eu.kanade.tachiyomi.animeextension.ar.sexalarab",
+    "apk": "aniyomi-ar.sexalarab-v14.1.apk",
+    "lang": "ar",
+    "code": 1,
+    "version": "14.1",
+    "nsfw": 1,
+    "sources": [
+      {
+        "name": "SexAlArab",
+        "lang": "ar",
+        "id": "5775122445703134991",
+        "baseUrl": "https://sexalarab.com"
+      }
+    ]
+  },
+  {
+    "name": "Aniyomi: SexMahali",
+    "pkg": "eu.kanade.tachiyomi.animeextension.ar.sexmahali",
+    "apk": "aniyomi-ar.sexmahali-v14.1.apk",
+    "lang": "ar",
+    "code": 1,
+    "version": "14.1",
+    "nsfw": 1,
+    "sources": [
+      {
+        "name": "SexMahali",
+        "lang": "ar",
+        "id": "3936577306335348182",
+        "baseUrl": "https://sexmahali.com"
       }
     ]
   },
