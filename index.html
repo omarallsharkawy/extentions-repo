@@ -1,0 +1,280 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Local AR+EN+ALL Extensions (14.x)</title>
+  <meta name="description" content="Install anime extensions for Aniyomi / Tadami / Anikku" />
+  <link rel="stylesheet" href="styles.css" />
+  <script src="config.js"></script>
+</head>
+<body>
+  <div class="wrap">
+    <header>
+      <h1>Local AR+EN+ALL Extensions</h1>
+      <p class="sub">
+        Aniyomi / Tadami / Anikku compatible repo · lib <strong>14.x</strong> ·
+        <span id="ext-count">…</span> extensions (AR · EN · ALL)
+      </p>
+    </header>
+
+    <div id="host-alert" class="alert" hidden>
+      <strong>Set your public URL</strong> so Automatic install works on a phone.
+      Edit <code>config.js</code> and set <code>window.REPO_BASE_URL</code> to your
+      GitHub Pages (or other HTTPS) origin, e.g.
+      <code>https://youruser.github.io/aniyomi-local-extensions</code>,
+      then re-open this page. Local file preview still works for browsing downloads.
+    </div>
+
+    <!-- Automatic installation -->
+    <section id="automatic">
+      <h2><span class="icon">🔗</span> Automatic installation</h2>
+      <p>Open this on your Android device with Aniyomi (or a compatible fork) installed.</p>
+      <div class="btn-row">
+        <a id="btn-aniyomi" class="btn-install" href="#">Click here to install repo</a>
+        <a id="btn-tadami" class="btn-secondary" href="#" title="Tadami / Anikku deep link if supported">Tadami / Anikku link</a>
+      </div>
+      <p class="hint" style="margin-top:0.85rem">
+        If the button does nothing, use <strong>Manual installation</strong> below.
+      </p>
+    </section>
+
+    <!-- Manual installation -->
+    <section id="manual">
+      <h2>Manual installation</h2>
+      <p>
+        Add the following link under
+        <strong>Settings → Browse → Anime extension repos</strong>
+        (Aniyomi) or
+        <strong>More → Settings → Browse → Extension Stores (Anime)</strong>
+        (Tadami).
+      </p>
+      <div class="url-box">
+        <code id="repo-url">…</code>
+        <button type="button" id="btn-copy" title="Copy">⧉</button>
+      </div>
+      <p class="hint">Same URL works for both apps. Trust the extension after install if prompted.</p>
+    </section>
+
+    <!-- Usage -->
+    <section id="usage">
+      <h2>Usage</h2>
+      <p>
+        Extension sources can be downloaded, installed, and uninstalled via the main app.
+        They are installed and uninstalled like regular apps, in
+        <code class="badge badge-lang" style="margin:0;border-radius:4px;padding:0.1rem 0.35rem">.apk</code>
+        format.
+      </p>
+      <p class="hint">
+        Flow: add repo → <strong>Browse → Extensions</strong> → install → open
+        <strong>Sources</strong> → Popular / Latest / Search → play.
+      </p>
+    </section>
+
+    <!-- Downloads -->
+    <section id="downloads">
+      <h2>Downloads</h2>
+      <p class="stats" id="dl-stats">Loading index…</p>
+      <div class="filters">
+        <input type="search" id="filter-q" placeholder="Search name, package, lang…" autocomplete="off" />
+        <select id="filter-lang">
+          <option value="">All languages</option>
+          <option value="all">all</option>
+          <option value="en">en</option>
+          <option value="ar">ar</option>
+        </select>
+        <select id="filter-nsfw">
+          <option value="">NSFW: any</option>
+          <option value="0">SFW only</option>
+          <option value="1">NSFW only</option>
+        </select>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Name</th>
+              <th>Lang</th>
+              <th>Version</th>
+              <th>Download</th>
+            </tr>
+          </thead>
+          <tbody id="dl-body">
+            <tr><td colspan="4">Loading…</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <footer>
+      Built from local <code>anime-extensions</code> (AR + EN + ALL).
+      Not affiliated with Aniyomi, Tadami, or Secozzi.
+      Host this folder over <strong>HTTPS</strong> for one-tap install.
+    </footer>
+  </div>
+
+  <div class="toast" id="toast">Copied</div>
+
+  <script>
+    (function () {
+      const base =
+        (window.REPO_BASE_URL && String(window.REPO_BASE_URL).replace(/\/$/, "")) ||
+        (location.protocol === "file:" ? "" : location.origin + location.pathname.replace(/\/?index\.html?$/i, "").replace(/\/$/, ""));
+
+      const indexUrl = base
+        ? base + "/index.min.json"
+        : new URL("index.min.json", location.href).href;
+
+      const repoUrlEl = document.getElementById("repo-url");
+      const btnAniyomi = document.getElementById("btn-aniyomi");
+      const btnTadami = document.getElementById("btn-tadami");
+      const hostAlert = document.getElementById("host-alert");
+      const toast = document.getElementById("toast");
+
+      function showToast(msg) {
+        toast.textContent = msg || "Copied";
+        toast.classList.add("show");
+        setTimeout(() => toast.classList.remove("show"), 1600);
+      }
+
+      function setInstallLinks(url) {
+        repoUrlEl.textContent = url;
+        const enc = encodeURIComponent(url);
+        // Aniyomi / most anime forks
+        btnAniyomi.href = "aniyomi://add-repo?url=" + enc;
+        // Tadami / Anikku often accept the same or anikku scheme
+        btnTadami.href = "anikku://add-repo?url=" + enc;
+        btnTadami.onclick = function (e) {
+          // fallback: also try aniyomi if anikku not handled
+          setTimeout(function () {
+            /* user can use manual URL */
+          }, 0);
+        };
+
+        const isPublicHttps = /^https:\/\//i.test(url) && !/localhost|127\.0\.0\.1/i.test(url);
+        if (!isPublicHttps) {
+          hostAlert.hidden = false;
+          if (!base) {
+            btnAniyomi.classList.add("is-disabled");
+            btnTadami.classList.add("is-disabled");
+          }
+        }
+      }
+
+      setInstallLinks(indexUrl);
+
+      document.getElementById("btn-copy").addEventListener("click", async () => {
+        const text = repoUrlEl.textContent.trim();
+        try {
+          await navigator.clipboard.writeText(text);
+          showToast("URL copied");
+        } catch {
+          const ta = document.createElement("textarea");
+          ta.value = text;
+          document.body.appendChild(ta);
+          ta.select();
+          document.execCommand("copy");
+          ta.remove();
+          showToast("URL copied");
+        }
+      });
+
+      let allExt = [];
+
+      function apkHref(apkPath) {
+        if (/^https?:\/\//i.test(apkPath)) return apkPath;
+        if (base) return base + "/" + apkPath.replace(/^\//, "");
+        return apkPath; // relative
+      }
+
+      function render() {
+        const q = document.getElementById("filter-q").value.trim().toLowerCase();
+        const lang = document.getElementById("filter-lang").value;
+        const nsfw = document.getElementById("filter-nsfw").value;
+        const body = document.getElementById("dl-body");
+        const filtered = allExt.filter((e) => {
+          if (lang && e.lang !== lang) return false;
+          if (nsfw !== "" && String(e.nsfw) !== nsfw) return false;
+          if (!q) return true;
+          const hay = [e.name, e.pkg, e.lang, e.version, e.apk].join(" ").toLowerCase();
+          return hay.includes(q);
+        });
+
+        document.getElementById("dl-stats").textContent =
+          "Showing " + filtered.length + " of " + allExt.length + " extensions";
+
+        if (!filtered.length) {
+          body.innerHTML = '<tr><td colspan="4">No matches</td></tr>';
+          return;
+        }
+
+        body.innerHTML = filtered
+          .map((e) => {
+            const short = (e.name || "").replace(/^Aniyomi:\s*/i, "");
+            const nsfwBadge = e.nsfw
+              ? '<span class="badge badge-nsfw">NSFW</span>'
+              : "";
+            const href = apkHref(e.apk);
+            return (
+              "<tr>" +
+              "<td>" +
+              escapeHtml(short) +
+              nsfwBadge +
+              "</td>" +
+              '<td><span class="badge badge-lang">' +
+              escapeHtml(e.lang || "?") +
+              "</span></td>" +
+              "<td>" +
+              escapeHtml(e.version || String(e.code || "")) +
+              "</td>" +
+              '<td><a class="dl" href="' +
+              escapeAttr(href) +
+              '" download>' +
+              "↓ APK" +
+              "</a></td>" +
+              "</tr>"
+            );
+          })
+          .join("");
+      }
+
+      function escapeHtml(s) {
+        return String(s)
+          .replace(/&/g, "&amp;")
+          .replace(/</g, "&lt;")
+          .replace(/>/g, "&gt;")
+          .replace(/"/g, "&quot;");
+      }
+      function escapeAttr(s) {
+        return escapeHtml(s).replace(/'/g, "&#39;");
+      }
+
+      ["filter-q", "filter-lang", "filter-nsfw"].forEach((id) => {
+        document.getElementById(id).addEventListener("input", render);
+        document.getElementById(id).addEventListener("change", render);
+      });
+
+      fetch("index.min.json", { cache: "no-store" })
+        .then((r) => {
+          if (!r.ok) throw new Error("HTTP " + r.status);
+          return r.json();
+        })
+        .then((data) => {
+          allExt = Array.isArray(data) ? data : [];
+          allExt.sort((a, b) =>
+            String(a.name || "").localeCompare(String(b.name || ""))
+          );
+          document.getElementById("ext-count").textContent = String(allExt.length);
+          render();
+        })
+        .catch((err) => {
+          document.getElementById("dl-body").innerHTML =
+            '<tr><td colspan="4">Failed to load index.min.json (' +
+            escapeHtml(err.message) +
+            "). Serve this folder over HTTP if opening as file://.</td></tr>";
+          document.getElementById("dl-stats").textContent = "Index load failed";
+        });
+    })();
+  </script>
+</body>
+</html>
