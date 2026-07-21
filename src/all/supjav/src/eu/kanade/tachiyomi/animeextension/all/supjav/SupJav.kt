@@ -395,19 +395,32 @@ class SupJav(override val lang: String = "en") :
         val doc = response.useAsJsoup()
 
         val playerElements = doc.select(
-            "div.btnst a[data-link], div.btnst > a, div.btns a[data-link], div.btns > a, " +
-                "a.btn-server, a[data-link], ul.nav-tabs a",
+            "div.btnst a, div.btns a, a.btn-server, a[data-link], a[data-url], a[data-src], " +
+                "a[href*=/supjav.php], a[href*=/supjav], ul.nav-tabs a, div.post-content a[href*=/supjav]",
         )
 
         val players = playerElements.mapNotNull { el ->
-            val name = el.ownText().ifBlank { el.text() }.trim().uppercase()
+            val rawName = el.ownText().ifBlank { el.text() }.trim().uppercase()
             val rawLink = el.attr("data-link")
                 .ifBlank { el.attr("data-url") }
                 .ifBlank { el.attr("data-src") }
                 .ifBlank { el.attr("href") }
                 .trim()
-            if (name.isEmpty() || rawLink.isEmpty() || rawLink.startsWith("javascript")) return@mapNotNull null
-            name to rawLink
+            if (rawLink.isEmpty() || rawLink.startsWith("javascript") || rawLink == "#") return@mapNotNull null
+
+            val fallbackName = when {
+                rawLink.contains("streamtape") || rawLink.contains("st") -> "ST"
+                rawLink.contains("voe") -> "VOE"
+                rawLink.contains("dood") || rawLink.contains("ds2") -> "DOOD"
+                rawLink.contains("mixdrop") -> "MIXDROP"
+                rawLink.contains("uqload") -> "UQLOAD"
+                rawLink.contains("vidhide") || rawLink.contains("hide") -> "VIDHIDE"
+                rawLink.contains("wish") || rawLink.contains("fst") -> "FST"
+                rawLink.contains("turbo") || rawLink.contains("tv") -> "TV"
+                else -> "SERVER"
+            }
+            val finalName = if (rawName.isBlank()) fallbackName else rawName
+            finalName to rawLink
         }.distinctBy { it.second }
 
         val videoList = players.parallelCatchingFlatMapBlocking(::videosFromPlayer)
