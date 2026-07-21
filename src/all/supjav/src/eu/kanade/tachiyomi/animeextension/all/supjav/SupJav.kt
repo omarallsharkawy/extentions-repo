@@ -27,6 +27,7 @@ import keiyoushi.utils.bodyString
 import keiyoushi.utils.getPreferencesLazy
 import keiyoushi.utils.parallelCatchingFlatMapBlocking
 import keiyoushi.utils.useAsJsoup
+import okhttp3.Headers
 import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import okhttp3.Request
@@ -53,6 +54,7 @@ class SupJav(override val lang: String = "en") :
     }
 
     override fun headersBuilder() = super.headersBuilder().apply {
+        set("User-Agent", DEFAULT_USER_AGENT)
         set("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8")
         set("Accept-Language", "en-US,en;q=0.9")
         set("Referer", "$baseUrl/")
@@ -443,19 +445,8 @@ class SupJav(override val lang: String = "en") :
                     .trim()
                 if (rawLink.isEmpty() || rawLink.startsWith("javascript") || rawLink == "#") return@mapNotNull null
 
-                val fallbackName = when {
-                    rawLink.contains("streamtape") || rawLink.contains("st") -> "ST"
-                    rawLink.contains("voe") -> "VOE"
-                    rawLink.contains("dood") || rawLink.contains("ds2") -> "DOOD"
-                    rawLink.contains("mixdrop") -> "MIXDROP"
-                    rawLink.contains("uqload") -> "UQLOAD"
-                    rawLink.contains("vidhide") || rawLink.contains("hide") -> "VIDHIDE"
-                    rawLink.contains("wish") || rawLink.contains("fst") -> "FST"
-                    rawLink.contains("turbo") || rawLink.contains("tv") -> "TV"
-                    else -> "SERVER"
-                }
-                val finalName = if (rawName.isBlank()) fallbackName else rawName
-                finalName to rawLink
+                val detected = detectHoster(rawName, rawLink)
+                detected to rawLink
             }.distinctBy { it.second }
 
             val videoList = players.parallelCatchingFlatMapBlocking(::videosFromPlayer)
@@ -551,46 +542,104 @@ class SupJav(override val lang: String = "en") :
         client.newBuilder().followRedirects(false).build()
     }
 
+    private fun detectHoster(name: String, link: String): String {
+        val upperName = name.uppercase()
+        val lowerLink = link.lowercase()
+        return when {
+            upperName == "ST" || upperName.contains("STREAMTAPE") || upperName.contains("TAPE") ||
+                lowerLink.contains("streamtape") || lowerLink.contains("strtape") || lowerLink.contains("tapecontent") || lowerLink.contains("strcloud") -> "ST"
+
+            upperName == "VOE" || upperName.contains("VOE") || lowerLink.contains("voe") -> "VOE"
+
+            upperName == "DS" || upperName == "DOOD" || upperName.contains("DOOD") ||
+                lowerLink.contains("dood") || lowerLink.contains("ds2play") || lowerLink.contains("doodstream") ||
+                lowerLink.contains("ds2video") || lowerLink.contains("d000d") || lowerLink.contains("do0od") -> "DOOD"
+
+            upperName == "MD" || upperName == "MIXDROP" || upperName.contains("MIXDROP") || upperName.contains("DROP") ||
+                lowerLink.contains("mixdrop") || lowerLink.contains("mixdroop") -> "MIXDROP"
+
+            upperName == "UQ" || upperName == "UQLOAD" || upperName.contains("UQLOAD") ||
+                lowerLink.contains("uqload") -> "UQLOAD"
+
+            upperName == "VH" || upperName == "VIDHIDE" || upperName.contains("VIDHIDE") || upperName.contains("HIDE") ||
+                lowerLink.contains("vidhide") || lowerLink.contains("streamhide") -> "VIDHIDE"
+
+            upperName == "FST" || upperName.contains("WISH") || upperName.contains("FC2") || upperName.contains("FST") ||
+                lowerLink.contains("streamwish") || lowerLink.contains("fc2stream") || lowerLink.contains("wish") || lowerLink.contains("filelions") -> "FST"
+
+            upperName == "TV" || upperName == "TURBOVID" || upperName.contains("TURBO") ||
+                lowerLink.contains("turbovid") || lowerLink.contains("emturbovid") || lowerLink.contains("turboviplay") || lowerLink.contains("tvid") -> "TV"
+
+            else -> upperName.ifBlank { "SERVER" }
+        }
+    }
+
+    private fun buildMediaHeaders(refererUrl: String): Headers {
+        val httpUrl = refererUrl.toHttpUrlOrNull()
+        val referer = httpUrl?.toString() ?: refererUrl
+        val origin = httpUrl?.let { "${it.scheme}://${it.host}" } ?: referer.removeSuffix("/")
+
+        return Headers.Builder()
+            .set("User-Agent", headers["User-Agent"] ?: DEFAULT_USER_AGENT)
+            .set("Accept", "*/*")
+            .set("Accept-Language", "en-US,en;q=0.9")
+            .set("Origin", origin)
+            .set("Referer", referer)
+            .build()
+    }
+
     private suspend fun videosFromPlayer(player: Pair<String, String>): List<Video> {
-        val (hoster, rawLink) = player
+        val (rawHosterName, rawLink) = player
         val url = resolveProtectorRedirect(rawLink) ?: return emptyList()
         val host = url.toHttpUrlOrNull()?.host.orEmpty().lowercase()
+        val hoster = detectHoster(rawHosterName, url)
+        val mediaHeaders = buildMediaHeaders(url)
 
         return runCatching {
-            when {
+            val rawVideos = when {
                 hoster == "ST" || host.contains("streamtape") || host.contains("strtape") ||
                     host.contains("tapecontent") || host.contains("strcloud") ->
                     streamtapeExtractor.videosFromUrl(url, quality = "ST")
 
                 hoster == "VOE" || host.contains("voe") ->
-                    voeExtractor.videosFromUrl(url, prefix = "VOE ")
+                    VoeExtractor(client, mediaHeaders).videosFromUrl(url, prefix = "VOE ")
 
-                hoster == "DS" || hoster == "DOOD" || host.contains("dood") ||
+                hoster == "DOOD" || host.contains("dood") ||
                     host.contains("ds2play") || host.contains("doodstream") ||
                     host.contains("dood.to") || host.contains("dood.so") || host.contains("ds2video") ||
                     host.contains("d000d") || host.contains("do0od") ->
                     doodExtractor.videosFromUrl(url)
 
-                hoster == "MD" || hoster == "MIXDROP" || host.contains("mixdrop") || host.contains("mixdroop") ->
+                hoster == "MIXDROP" || host.contains("mixdrop") || host.contains("mixdroop") ->
                     mixdropExtractor.videoFromUrl(url, prefix = "MixDrop - ")
 
-                hoster == "UQ" || hoster == "UQLOAD" || host.contains("uqload") ->
+                hoster == "UQLOAD" || host.contains("uqload") ->
                     uqloadExtractor.videosFromUrl(url, prefix = "Uqload - ")
 
-                hoster == "VH" || hoster == "VIDHIDE" || host.contains("vidhide") ||
+                hoster == "VIDHIDE" || host.contains("vidhide") ||
                     host.contains("hide") || host.contains("streamhide") ->
-                    vidhideExtractor.videosFromUrl(url)
+                    VidHideExtractor(client, mediaHeaders).videosFromUrl(url)
 
                 hoster == "FST" || isStreamWishLikeHost(host) ->
                     videosFromStreamWishLike(url, "FST")
 
-                hoster == "TV" || hoster == "TURBOVID" || isTurboVidHost(host) ->
+                hoster == "TV" || isTurboVidHost(host) ->
                     videosFromTurboVid(url)
 
                 else -> {
                     videosFromTurboVid(url)
-                        .ifEmpty { videosFromStreamWishLike(url, hoster.ifBlank { host }) }
-                        .ifEmpty { videosFromGenericEmbed(url, hoster) }
+                        .ifEmpty { videosFromStreamWishLike(url, rawHosterName.ifBlank { host }) }
+                        .ifEmpty { videosFromGenericEmbed(url, rawHosterName.ifBlank { "SERVER" }) }
+                }
+            }
+
+            rawVideos.map { video ->
+                val vHeaders = video.headers
+                if (vHeaders == null || vHeaders.get("Sec-Fetch-Dest") == "document" || vHeaders.get("Origin")?.contains("supjav.com") == true) {
+                    val refererForVid = video.videoUrl?.toHttpUrlOrNull()?.let { "${it.scheme}://${it.host}/" } ?: url
+                    video.copy(headers = buildMediaHeaders(refererForVid))
+                } else {
+                    video
                 }
             }
         }.getOrDefault(emptyList())
@@ -609,9 +658,22 @@ class SupJav(override val lang: String = "en") :
         if (cleanRaw.startsWith("http://") || cleanRaw.startsWith("https://")) {
             if (cleanRaw.contains("supjav.php")) {
                 val loc = fetchProtectorLocation(cleanRaw)
-                if (!loc.isNullOrBlank() && loc != cleanRaw) {
+                if (!loc.isNullOrBlank() && loc != cleanRaw && !loc.contains("supjav.php")) {
                     return resolveProtectorRedirect(loc)
                 }
+                if (!loc.isNullOrBlank() && loc.contains("supjav.php") && loc != cleanRaw) {
+                    val nextLoc = resolveProtectorRedirect(loc)
+                    if (!nextLoc.isNullOrBlank()) return nextLoc
+                }
+                val paramId = cleanRaw.toHttpUrlOrNull()?.queryParameter("c")
+                    ?: cleanRaw.toHttpUrlOrNull()?.queryParameter("l")
+                    ?: Regex("""[?&](?:c|l)=([^&]+)""").find(cleanRaw)?.groupValues?.get(1)
+
+                if (!paramId.isNullOrBlank()) {
+                    val fallbackRes = resolveProtectorFromId(paramId)
+                    if (!fallbackRes.isNullOrBlank()) return fallbackRes
+                }
+                return null
             }
             return cleanRaw
         }
@@ -630,9 +692,13 @@ class SupJav(override val lang: String = "en") :
             return resolveProtectorRedirect(decodedRev)
         }
 
+        return resolveProtectorFromId(cleanRaw)
+    }
+
+    private suspend fun resolveProtectorFromId(rawId: String): String? {
         val hosts = listOf(baseUrl.trimEnd('/'), "https://lk1.supremejav.com", "https://supjav.com").distinct()
         val params = listOf("l", "c")
-        val ids = listOf(cleanRaw, cleanRaw.reversed()).distinct()
+        val ids = listOf(rawId, rawId.reversed()).distinct()
 
         for (host in hosts) {
             for (param in params) {
@@ -642,9 +708,12 @@ class SupJav(override val lang: String = "en") :
                     if (!location.isNullOrBlank() && location != targetUrl) {
                         if (location.contains("supjav.php")) {
                             val nextLoc = fetchProtectorLocation(location)
-                            if (!nextLoc.isNullOrBlank()) return nextLoc
+                            if (!nextLoc.isNullOrBlank() && !nextLoc.contains("supjav.php")) {
+                                return nextLoc
+                            }
+                        } else {
+                            return location
                         }
-                        return location
                     }
                 }
             }
@@ -653,8 +722,17 @@ class SupJav(override val lang: String = "en") :
     }
 
     private suspend fun fetchProtectorLocation(targetUrl: String): String? = runCatching {
-        val req = GET(targetUrl, protectorHeaders)
-        noRedirectClient.newCall(req).await().use { resp ->
+        val reqBuilder = GET(targetUrl, headers).newBuilder()
+        val targetHost = targetUrl.toHttpUrlOrNull()?.host
+        val baseHost = baseUrl.toHttpUrlOrNull()?.host
+        if (targetHost != null && targetHost == baseHost) {
+            reqBuilder.header("Sec-Fetch-Site", "same-origin")
+        } else {
+            reqBuilder.header("Sec-Fetch-Site", "cross-site")
+        }
+        reqBuilder.header("Referer", "$baseUrl/")
+
+        noRedirectClient.newCall(reqBuilder.build()).await().use { resp ->
             val loc = (resp.header("location") ?: resp.header("Location"))?.trim()
             if (!loc.isNullOrEmpty()) {
                 return@use resolveRelative(loc, targetUrl)
@@ -683,6 +761,11 @@ class SupJav(override val lang: String = "en") :
                         return@use resolveRelative(metaUrl, targetUrl)
                     }
 
+                    val directHosterUrl = DIRECT_HOSTER_REGEX.find(body)?.value
+                    if (!directHosterUrl.isNullOrEmpty()) {
+                        return@use resolveRelative(directHosterUrl, targetUrl)
+                    }
+
                     if (body.contains("eval(function(p,a,c")) {
                         val unpacked = PACKED_REGEX.findAll(body).mapNotNull { m ->
                             runCatching { JsUnpacker.unpackAndCombine(m.value) }.getOrNull()
@@ -697,6 +780,10 @@ class SupJav(override val lang: String = "en") :
                             .find(unpacked)?.groupValues?.get(1)
                         if (!iframeUnpacked.isNullOrEmpty()) {
                             return@use resolveRelative(iframeUnpacked, targetUrl)
+                        }
+                        val directHosterUnpacked = DIRECT_HOSTER_REGEX.find(unpacked)?.value
+                        if (!directHosterUnpacked.isNullOrEmpty()) {
+                            return@use resolveRelative(directHosterUnpacked, targetUrl)
                         }
                     }
                 }
@@ -737,19 +824,12 @@ class SupJav(override val lang: String = "en") :
         val playlistUrl = resolveRelative(rawPlaylistUrl, url)
         if (playlistUrl.toHttpUrlOrNull() == null) return emptyList()
 
-        val baseUrlObj = url.toHttpUrlOrNull()
-        val referer = baseUrlObj?.let { "${it.scheme}://${it.host}/" } ?: url
-        val hlsHeaders = headers.newBuilder()
-            .set("Accept", "*/*")
-            .set("Accept-Language", "en-US,en;q=0.9")
-            .set("Origin", referer.removeSuffix("/"))
-            .set("Referer", referer)
-            .build()
+        val hlsHeaders = buildMediaHeaders(url)
 
         return runCatching {
             playlistUtils.extractFromHls(
                 playlistUrl,
-                referer = referer,
+                referer = url,
                 masterHeaders = hlsHeaders,
                 videoHeaders = hlsHeaders,
                 videoNameGen = { "TV - $it" },
@@ -758,8 +838,9 @@ class SupJav(override val lang: String = "en") :
     }
 
     private suspend fun videosFromStreamWishLike(url: String, prefix: String): List<Video> {
+        val mediaHeaders = buildMediaHeaders(url)
         val fromExtractor = runCatching {
-            streamwishExtractor.videosFromUrl(url) { "$prefix - $it" }
+            StreamWishExtractor(client, mediaHeaders).videosFromUrl(url) { "$prefix - $it" }
         }.getOrDefault(emptyList())
         if (fromExtractor.isNotEmpty()) return fromExtractor
 
@@ -789,9 +870,6 @@ class SupJav(override val lang: String = "en") :
             }
             ?: return emptyList()
 
-        val baseUrlObj = url.toHttpUrlOrNull()
-        val referer = baseUrlObj?.let { "${it.scheme}://${it.host}/" } ?: url
-
         val masterUrls = PLAYLIST_REGEX.findAll(scriptBody).map { it.value }.toList()
             .ifEmpty { M3U8_REGEX.findAll(scriptBody).map { it.value }.toList() }
         if (masterUrls.isEmpty()) return emptyList()
@@ -799,17 +877,12 @@ class SupJav(override val lang: String = "en") :
         val videos = mutableListOf<Video>()
         for (masterUrl in masterUrls) {
             val absMasterUrl = resolveRelative(masterUrl, url)
-            val hlsHeaders = headers.newBuilder()
-                .set("Accept", "*/*")
-                .set("Accept-Language", "en-US,en;q=0.9")
-                .set("Origin", referer.removeSuffix("/"))
-                .set("Referer", referer)
-                .build()
+            val hlsHeaders = buildMediaHeaders(url)
 
             val extracted = runCatching {
                 playlistUtils.extractFromHls(
                     playlistUrl = absMasterUrl,
-                    referer = referer,
+                    referer = url,
                     masterHeaders = hlsHeaders,
                     videoHeaders = hlsHeaders,
                     videoNameGen = { "$prefix - $it" },
@@ -826,19 +899,13 @@ class SupJav(override val lang: String = "en") :
         val cleanUrl = url.trim()
         if (!cleanUrl.startsWith("http")) return emptyList()
 
-        val embedHost = cleanUrl.toHttpUrlOrNull()?.let { "${it.scheme}://${it.host}/" } ?: url
-        val hlsHeaders = headers.newBuilder()
-            .set("Accept", "*/*")
-            .set("Accept-Language", "en-US,en;q=0.9")
-            .set("Origin", embedHost.removeSuffix("/"))
-            .set("Referer", embedHost)
-            .build()
+        val hlsHeaders = buildMediaHeaders(cleanUrl)
 
         if (cleanUrl.contains(".m3u8", ignoreCase = true)) {
             return runCatching {
                 playlistUtils.extractFromHls(
                     cleanUrl,
-                    referer = embedHost,
+                    referer = cleanUrl,
                     masterHeaders = hlsHeaders,
                     videoHeaders = hlsHeaders,
                     videoNameGen = { "$hoster - $it" },
@@ -864,7 +931,7 @@ class SupJav(override val lang: String = "en") :
                 val extracted = runCatching {
                     playlistUtils.extractFromHls(
                         absM3u8,
-                        referer = embedHost,
+                        referer = cleanUrl,
                         masterHeaders = hlsHeaders,
                         videoHeaders = hlsHeaders,
                         videoNameGen = { "$hoster - $it" },
@@ -882,7 +949,7 @@ class SupJav(override val lang: String = "en") :
             if (!directSrc.isNullOrBlank()) {
                 val absDirect = resolveRelative(directSrc, cleanUrl)
                 if (absDirect.startsWith("http")) {
-                    return@runCatching listOf(Video(absDirect, "$hoster - Direct", absDirect, headers = hlsHeaders))
+                    return@runCatching listOf(Video(absDirect, "$hoster - Direct", absDirect, headers = buildMediaHeaders(absDirect)))
                 }
             }
 
@@ -969,6 +1036,9 @@ class SupJav(override val lang: String = "en") :
         }
         private val PACKED_REGEX by lazy {
             Regex("""eval\(function\(p,a,c,k,e,d\).*?\.split\('\|'\)\)\)""", RegexOption.DOT_MATCHES_ALL)
+        }
+        private val DIRECT_HOSTER_REGEX by lazy {
+            Regex("""https?://[^"'\s\\]+\.(?:sx|com|net|org|to|so|la|ws|bz|ch|co|io|pro|tv|eu|link)/[^\s"'\\]*(?:streamtape|strtape|strcloud|voe|dood|ds2play|mixdrop|uqload|vidhide|streamwish|fc2stream|turbovid|emturbovid|filelions)[^\s"'\\]*""", RegexOption.IGNORE_CASE)
         }
 
         private const val PREF_QUALITY_KEY = "pref_quality"
