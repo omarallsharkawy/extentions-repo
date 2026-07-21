@@ -1,7 +1,7 @@
 ext {
     extName = 'PornHub'
     extClass = '.PornHub'
-    extVersionCode = 24
+    extVersionCode = 25
     isNsfw = true
 }
 

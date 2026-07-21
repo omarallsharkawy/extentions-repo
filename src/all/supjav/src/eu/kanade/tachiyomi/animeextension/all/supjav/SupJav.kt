@@ -45,9 +45,18 @@ class SupJav(override val lang: String = "en") :
 
     override val supportsLatest = true
 
-    override fun headersBuilder() = super.headersBuilder()
-        .set("Referer", "$baseUrl/")
-        .set("Origin", baseUrl)
+    override fun headersBuilder() = super.headersBuilder().apply {
+        set("User-Agent", DEFAULT_USER_AGENT)
+        set("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8")
+        set("Accept-Language", "en-US,en;q=0.9")
+        set("Referer", "$baseUrl/")
+        set("Origin", baseUrl)
+        set("Sec-Fetch-Dest", "document")
+        set("Sec-Fetch-Mode", "navigate")
+        set("Sec-Fetch-Site", "same-origin")
+        set("Sec-Fetch-User", "?1")
+        set("Upgrade-Insecure-Requests", "1")
+    }
 
     private val langPath = when (lang) {
         "en" -> ""
@@ -194,19 +203,22 @@ class SupJav(override val lang: String = "en") :
     // =============================== Search ===============================
     override suspend fun getSearchAnime(page: Int, query: String, filters: AnimeFilterList): AnimesPage {
         if (query.startsWith("https://")) {
-            val url = query.toHttpUrl()
-            if (url.host != baseUrl.toHttpUrl().host) {
-                throw Exception("Unsupported url")
+            val url = query.toHttpUrlOrNull() ?: return AnimesPage(emptyList(), false)
+            val baseHost = baseUrl.toHttpUrlOrNull()?.host
+            if (baseHost != null && url.host != baseHost) {
+                return AnimesPage(emptyList(), false)
             }
             val path = url.pathSegments.takeIf { it.isNotEmpty() }?.joinToString("/")
-                ?: throw Exception("Unsupported url")
+                ?: return AnimesPage(emptyList(), false)
             return getSearchAnime(page, "$PREFIX_SEARCH$path", filters)
         }
         if (query.startsWith(PREFIX_SEARCH)) {
             val id = query.removePrefix(PREFIX_SEARCH)
-            return client.newCall(GET("$baseUrl/$id"))
-                .awaitSuccess()
-                .use(::searchAnimeByIdParse)
+            return runCatching {
+                client.newCall(GET(getFullUrl(id)))
+                    .awaitSuccess()
+                    .use(::searchAnimeByIdParse)
+            }.getOrDefault(AnimesPage(emptyList(), false))
         }
         return super.getSearchAnime(page, query, filters)
     }
@@ -344,19 +356,20 @@ class SupJav(override val lang: String = "en") :
 
     // =========================== Anime Details ============================
     override fun animeDetailsParse(document: Document) = SAnime.create().apply {
-        val content = document.selectFirst("div.content > div.post-meta")!!
-        title = content.selectFirst("h2")!!.text()
-        thumbnail_url = content.selectFirst("img")?.run {
+        val content = document.selectFirst("div.content > div.post-meta, div.post-meta, div.content")
+        title = content?.selectFirst("h2, h1")?.text()
+            ?: document.selectFirst("h2, h1")?.text().orEmpty()
+        thumbnail_url = content?.selectFirst("img")?.run {
             val raw = attr("data-original").ifBlank { attr("data-src") }
                 .ifBlank { attr("src") }
             if (raw.startsWith("http")) raw else absUrl(raw).ifBlank { raw }
-        }
+        } ?: document.selectFirst("div.content img, img")?.attr("src")
 
-        content.selectFirst("div.cats")?.run {
+        content?.selectFirst("div.cats")?.run {
             author = select("p:contains(Maker :) > a").textsOrNull()
             artist = select("p:contains(Cast :) > a").textsOrNull()
         }
-        genre = content.select("div.tags > a").textsOrNull()
+        genre = content?.select("div.tags > a")?.textsOrNull()
         status = SAnime.COMPLETED
     }
 
@@ -390,84 +403,127 @@ class SupJav(override val lang: String = "en") :
         episode_number = 1F
     }
 
-    override fun animeDetailsRequest(anime: SAnime): Request {
-        val url = if (anime.url.startsWith("http")) anime.url else baseUrl + anime.url
-        return GET(url, headers)
+    private fun getFullUrl(pathUrl: String): String = when {
+        pathUrl.startsWith("http://") || pathUrl.startsWith("https://") -> pathUrl
+        pathUrl.startsWith("/") -> "$baseUrl$pathUrl"
+        else -> "$baseUrl/$pathUrl"
     }
 
-    override fun episodeListRequest(anime: SAnime): Request {
-        val url = if (anime.url.startsWith("http")) anime.url else baseUrl + anime.url
-        return GET(url, headers)
-    }
+    override fun animeDetailsRequest(anime: SAnime): Request = GET(getFullUrl(anime.url), headers)
 
-    override fun videoListRequest(episode: SEpisode): Request {
-        val url = if (episode.url.startsWith("http")) episode.url else baseUrl + episode.url
-        return GET(url, headers)
-    }
+    override fun episodeListRequest(anime: SAnime): Request = GET(getFullUrl(anime.url), headers)
+
+    override fun videoListRequest(episode: SEpisode): Request = GET(getFullUrl(episode.url), headers)
 
     // ============================ Video Links =============================
     override fun videoListParse(response: Response): List<Video> {
-        val doc = response.useAsJsoup()
+        return runCatching {
+            val doc = response.useAsJsoup()
 
-        val playerElements = doc.select(
-            "div.btnst a, div.btns a, a.btn-server, a[data-link], a[data-url], a[data-src], " +
-                "a[href*=/supjav.php], a[href*=/supjav], ul.nav-tabs a, div.post-content a[href*=/supjav]",
-        )
+            val playerElements = doc.select(
+                "div.btnst a, div.btns a, a.btn-server, a[data-link], a[data-url], a[data-src], a[data-href], " +
+                    "button[data-link], button[data-url], [data-link], [data-url], [data-src], [data-href], " +
+                    "a[href*=/supjav.php], a[href*=/supjav], ul.nav-tabs a, div.post-content a[href*=/supjav]",
+            )
 
-        val players = playerElements.mapNotNull { el ->
-            val rawName = el.ownText().ifBlank { el.text() }.trim().uppercase()
-            val rawLink = el.attr("data-link")
-                .ifBlank { el.attr("data-url") }
-                .ifBlank { el.attr("data-src") }
-                .ifBlank { el.attr("href") }
-                .trim()
-            if (rawLink.isEmpty() || rawLink.startsWith("javascript") || rawLink == "#") return@mapNotNull null
+            val players = playerElements.mapNotNull { el ->
+                val rawName = el.ownText().ifBlank { el.text() }.trim().uppercase()
+                    .replace("SERVER", "").replace(":", "").trim()
+                val rawLink = el.attr("data-link")
+                    .ifBlank { el.attr("data-url") }
+                    .ifBlank { el.attr("data-src") }
+                    .ifBlank { el.attr("data-href") }
+                    .ifBlank { el.attr("href") }
+                    .trim()
+                if (rawLink.isEmpty() || rawLink.startsWith("javascript") || rawLink == "#") return@mapNotNull null
 
-            val fallbackName = when {
-                rawLink.contains("streamtape") || rawLink.contains("st") -> "ST"
-                rawLink.contains("voe") -> "VOE"
-                rawLink.contains("dood") || rawLink.contains("ds2") -> "DOOD"
-                rawLink.contains("mixdrop") -> "MIXDROP"
-                rawLink.contains("uqload") -> "UQLOAD"
-                rawLink.contains("vidhide") || rawLink.contains("hide") -> "VIDHIDE"
-                rawLink.contains("wish") || rawLink.contains("fst") -> "FST"
-                rawLink.contains("turbo") || rawLink.contains("tv") -> "TV"
-                else -> "SERVER"
+                val fallbackName = when {
+                    rawLink.contains("streamtape") || rawLink.contains("st") -> "ST"
+                    rawLink.contains("voe") -> "VOE"
+                    rawLink.contains("dood") || rawLink.contains("ds2") -> "DOOD"
+                    rawLink.contains("mixdrop") -> "MIXDROP"
+                    rawLink.contains("uqload") -> "UQLOAD"
+                    rawLink.contains("vidhide") || rawLink.contains("hide") -> "VIDHIDE"
+                    rawLink.contains("wish") || rawLink.contains("fst") -> "FST"
+                    rawLink.contains("turbo") || rawLink.contains("tv") -> "TV"
+                    else -> "SERVER"
+                }
+                val finalName = if (rawName.isBlank()) fallbackName else rawName
+                finalName to rawLink
+            }.distinctBy { it.second }
+
+            val videoList = players.parallelCatchingFlatMapBlocking(::videosFromPlayer)
+            if (videoList.isNotEmpty()) return@runCatching videoList
+
+            // Fallback 1: check embedded iframes in post body or player container
+            val iframes = doc.select("iframe[src], iframe[data-src], div.post-content iframe, div.player-wrap iframe, div#dz_video iframe")
+                .mapNotNull { el ->
+                    val src = el.attr("data-src").ifBlank { el.attr("src") }.trim()
+                    if (src.isBlank() || src.startsWith("javascript") || src == "#") null else "EMBED" to src
+                }
+                .distinctBy { it.second }
+
+            val iframeVideos = iframes.parallelCatchingFlatMapBlocking(::videosFromPlayer)
+            if (iframeVideos.isNotEmpty()) return@runCatching iframeVideos
+
+            // Fallback 2: check download buttons
+            val downloadBtns = doc.select("div.downs a, div.downscase a, a.btn-down")
+                .mapNotNull { el ->
+                    val link = el.attr("data-link").ifBlank { el.attr("data-url") }.ifBlank { el.attr("href") }.trim()
+                    val name = el.text().trim().uppercase().ifBlank { "DL" }
+                    if (link.isBlank() || link.startsWith("javascript") || link == "#") null else name to link
+                }
+                .distinctBy { it.second }
+
+            val downloadVideos = downloadBtns.parallelCatchingFlatMapBlocking(::videosFromPlayer)
+            if (downloadVideos.isNotEmpty()) return@runCatching downloadVideos
+
+            // Fallback 3: scan entire HTML body text for protector parameters, c=, l=, data-link or direct embed URLs
+            val htmlBody = doc.outerHtml()
+            val regexLinks = Regex("""(?:data-link|data-url|data-src|data-href|href|src)\s*=\s*["']([^"']+)["']""")
+                .findAll(htmlBody)
+                .map { it.groupValues[1].trim() }
+                .filter { link ->
+                    !link.startsWith("javascript") && link != "#" &&
+                        (
+                            link.contains("supjav.php") || link.contains("c=") || link.contains("l=") ||
+                                link.contains("streamtape") || link.contains("voe") || link.contains("dood") ||
+                                link.contains("mixdrop") || link.contains("uqload") || link.contains("vidhide") ||
+                                link.contains("streamwish") || link.contains("turbovid") || link.contains("fc2stream") ||
+                                link.contains("filelions")
+                            )
+                }
+                .map { "SERVER" to it }
+                .distinctBy { it.second }
+                .toList()
+
+            val regexVideos = regexLinks.parallelCatchingFlatMapBlocking(::videosFromPlayer)
+            if (regexVideos.isNotEmpty()) return@runCatching regexVideos
+
+            // Fallback 4: check packed JS in the HTML page body
+            if (htmlBody.contains("eval(function(p,a,c")) {
+                val unpackedScripts = PACKED_REGEX.findAll(htmlBody).mapNotNull { m ->
+                    runCatching { JsUnpacker.unpackAndCombine(m.value) }.getOrNull()
+                }.joinToString("\n")
+
+                val scriptLinks = Regex("""https?://[^"'\s\\]+""")
+                    .findAll(unpackedScripts)
+                    .map { it.value }
+                    .filter { link ->
+                        link.contains(".m3u8") || link.contains("streamtape") || link.contains("voe") ||
+                            link.contains("dood") || link.contains("mixdrop") || link.contains("uqload") ||
+                            link.contains("vidhide") || link.contains("streamwish") || link.contains("turbovid")
+                    }
+                    .map { "SERVER" to it }
+                    .distinctBy { it.second }
+                    .toList()
+
+                val scriptVideos = scriptLinks.parallelCatchingFlatMapBlocking(::videosFromPlayer)
+                if (scriptVideos.isNotEmpty()) return@runCatching scriptVideos
             }
-            val finalName = if (rawName.isBlank()) fallbackName else rawName
-            finalName to rawLink
-        }.distinctBy { it.second }
 
-        val videoList = players.parallelCatchingFlatMapBlocking(::videosFromPlayer)
-        if (videoList.isNotEmpty()) return videoList
-
-        // Fallback to checking embedded iframes in post body
-        val iframes = doc.select("iframe[src], iframe[data-src], div.post-content iframe, div.player-wrap iframe, div#dz_video iframe")
-            .mapNotNull { el ->
-                val src = el.attr("data-src").ifBlank { el.attr("src") }.trim()
-                if (src.isBlank() || src.startsWith("javascript")) null else "EMBED" to src
-            }
-            .distinctBy { it.second }
-
-        val iframeVideos = iframes.parallelCatchingFlatMapBlocking(::videosFromPlayer)
-        if (iframeVideos.isNotEmpty()) return iframeVideos
-
-        // Last resort: scan entire HTML body text for protector parameters, c=, l=, data-link or direct embed URLs
-        val htmlBody = doc.outerHtml()
-        val regexLinks = Regex("""(?:data-link|data-url|data-src|href|src)\s*=\s*["']([^"']+)["']""")
-            .findAll(htmlBody)
-            .map { it.groupValues[1].trim() }
-            .filter { link ->
-                link.contains("supjav.php") || link.contains("c=") || link.contains("l=") ||
-                    link.contains("streamtape") || link.contains("voe") || link.contains("dood") ||
-                    link.contains("mixdrop") || link.contains("uqload") || link.contains("vidhide") ||
-                    link.contains("streamwish") || link.contains("turbovid") || link.contains("fc2stream")
-            }
-            .map { "SERVER" to it }
-            .distinctBy { it.second }
-            .toList()
-
-        return regexLinks.parallelCatchingFlatMapBlocking(::videosFromPlayer)
+            emptyList()
+        }.getOrDefault(emptyList())
     }
 
     private val playlistUtils by lazy { PlaylistUtils(client, headers) }
@@ -480,11 +536,8 @@ class SupJav(override val lang: String = "en") :
     private val vidhideExtractor by lazy { VidHideExtractor(client, headers) }
 
     private val protectorHeaders by lazy {
-        super.headersBuilder()
-            .set("Referer", "$baseUrl/")
-            .set("Origin", baseUrl)
-            .set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36")
-            .set("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
+        headersBuilder()
+            .set("Sec-Fetch-Site", "cross-site")
             .build()
     }
 
@@ -500,7 +553,7 @@ class SupJav(override val lang: String = "en") :
         return runCatching {
             when {
                 hoster == "ST" || host.contains("streamtape") || host.contains("strtape") ||
-                    host.contains("tapecontent") ->
+                    host.contains("tapecontent") || host.contains("strcloud") ->
                     streamtapeExtractor.videosFromUrl(url, quality = "ST")
 
                 hoster == "VOE" || host.contains("voe") ->
@@ -508,22 +561,24 @@ class SupJav(override val lang: String = "en") :
 
                 hoster == "DS" || hoster == "DOOD" || host.contains("dood") ||
                     host.contains("ds2play") || host.contains("doodstream") ||
-                    host.contains("dood.to") || host.contains("dood.so") || host.contains("ds2video") ->
+                    host.contains("dood.to") || host.contains("dood.so") || host.contains("ds2video") ||
+                    host.contains("d000d") || host.contains("do0od") ->
                     doodExtractor.videosFromUrl(url)
 
-                hoster == "MD" || hoster == "MIXDROP" || host.contains("mixdrop") ->
+                hoster == "MD" || hoster == "MIXDROP" || host.contains("mixdrop") || host.contains("mixdroop") ->
                     mixdropExtractor.videoFromUrl(url, prefix = "MixDrop - ")
 
                 hoster == "UQ" || hoster == "UQLOAD" || host.contains("uqload") ->
                     uqloadExtractor.videosFromUrl(url, prefix = "Uqload - ")
 
-                hoster == "VH" || host.contains("vidhide") || host.contains("hide") ->
+                hoster == "VH" || hoster == "VIDHIDE" || host.contains("vidhide") ||
+                    host.contains("hide") || host.contains("streamhide") ->
                     vidhideExtractor.videosFromUrl(url)
 
                 hoster == "FST" || isStreamWishLikeHost(host) ->
                     videosFromStreamWishLike(url, "FST")
 
-                hoster == "TV" || isTurboVidHost(host) ->
+                hoster == "TV" || hoster == "TURBOVID" || isTurboVidHost(host) ->
                     videosFromTurboVid(url)
 
                 else -> {
@@ -536,31 +591,41 @@ class SupJav(override val lang: String = "en") :
     }
 
     private suspend fun resolveProtectorRedirect(rawLink: String): String? {
-        val cleanRaw = rawLink.trim()
+        var cleanRaw = rawLink.trim()
         if (cleanRaw.isBlank()) return null
-        if (cleanRaw.startsWith("http://") || cleanRaw.startsWith("https://")) {
-            return cleanRaw
-        }
+
         if (cleanRaw.startsWith("//")) {
-            return "https:$cleanRaw"
+            cleanRaw = "https:$cleanRaw"
+        } else if (cleanRaw.startsWith("/")) {
+            cleanRaw = "$baseUrl$cleanRaw"
+        }
+
+        if (cleanRaw.startsWith("http://") || cleanRaw.startsWith("https://")) {
+            if (cleanRaw.contains("supjav.php")) {
+                val loc = fetchProtectorLocation(cleanRaw)
+                if (!loc.isNullOrBlank() && loc != cleanRaw) {
+                    return resolveProtectorRedirect(loc)
+                }
+            }
+            return cleanRaw
         }
 
         val decoded = runCatching {
             String(android.util.Base64.decode(cleanRaw, android.util.Base64.DEFAULT), Charsets.UTF_8).trim()
         }.getOrNull()
         if (decoded != null && (decoded.startsWith("http://") || decoded.startsWith("https://"))) {
-            return decoded
+            return resolveProtectorRedirect(decoded)
         }
 
         val decodedRev = runCatching {
             String(android.util.Base64.decode(cleanRaw.reversed(), android.util.Base64.DEFAULT), Charsets.UTF_8).trim()
         }.getOrNull()
         if (decodedRev != null && (decodedRev.startsWith("http://") || decodedRev.startsWith("https://"))) {
-            return decodedRev
+            return resolveProtectorRedirect(decodedRev)
         }
 
-        val hosts = listOf("https://lk1.supremejav.com", "https://supjav.com")
-        val params = listOf("c", "l")
+        val hosts = listOf(baseUrl.trimEnd('/'), "https://lk1.supremejav.com", "https://supjav.com").distinct()
+        val params = listOf("l", "c")
         val ids = listOf(cleanRaw, cleanRaw.reversed()).distinct()
 
         for (host in hosts) {
@@ -568,7 +633,11 @@ class SupJav(override val lang: String = "en") :
                 for (id in ids) {
                     val targetUrl = "$host/supjav.php?$param=$id"
                     val location = fetchProtectorLocation(targetUrl)
-                    if (!location.isNullOrBlank()) {
+                    if (!location.isNullOrBlank() && location != targetUrl) {
+                        if (location.contains("supjav.php")) {
+                            val nextLoc = fetchProtectorLocation(location)
+                            if (!nextLoc.isNullOrBlank()) return nextLoc
+                        }
                         return location
                     }
                 }
@@ -582,18 +651,7 @@ class SupJav(override val lang: String = "en") :
         noRedirectClient.newCall(req).await().use { resp ->
             val loc = (resp.header("location") ?: resp.header("Location"))?.trim()
             if (!loc.isNullOrEmpty()) {
-                return@use when {
-                    loc.startsWith("http") -> loc
-
-                    loc.startsWith("//") -> "https:$loc"
-
-                    loc.startsWith("/") -> {
-                        val httpUrl = targetUrl.toHttpUrlOrNull()
-                        if (httpUrl != null) "${httpUrl.scheme}://${httpUrl.host}$loc" else null
-                    }
-
-                    else -> null
-                }
+                return@use resolveRelative(loc, targetUrl)
             }
 
             if (resp.isSuccessful) {
@@ -603,38 +661,94 @@ class SupJav(override val lang: String = "en") :
                     val iframeSrc = doc.selectFirst("iframe[src], iframe[data-src]")?.let {
                         it.attr("data-src").ifBlank { it.attr("src") }
                     }?.trim()
-                    if (!iframeSrc.isNullOrEmpty() && (iframeSrc.startsWith("http") || iframeSrc.startsWith("//"))) {
-                        return@use if (iframeSrc.startsWith("//")) "https:$iframeSrc" else iframeSrc
+                    if (!iframeSrc.isNullOrEmpty()) {
+                        return@use resolveRelative(iframeSrc, targetUrl)
                     }
 
-                    val jsLoc = Regex("""(?:window\.|location\.)(?:href|replace)\s*=\s*["'](https?://[^"']+)["']""")
+                    val jsLoc = Regex("""(?:window\.|location\.)(?:href|replace)\s*=\s*["']([^"']+)["']""")
                         .find(body)?.groupValues?.get(1)
-                    if (!jsLoc.isNullOrEmpty()) return@use jsLoc
+                    if (!jsLoc.isNullOrEmpty()) {
+                        return@use resolveRelative(jsLoc, targetUrl)
+                    }
 
                     val metaRef = doc.selectFirst("meta[http-equiv=refresh]")?.attr("content")
-                    val metaUrl = metaRef?.let { Regex("""url=(https?://[^\s"']+)""", RegexOption.IGNORE_CASE).find(it)?.groupValues?.get(1) }
-                    if (!metaUrl.isNullOrEmpty()) return@use metaUrl
+                    val metaUrl = metaRef?.let { Regex("""url=([^\s"']+)""", RegexOption.IGNORE_CASE).find(it)?.groupValues?.get(1) }
+                    if (!metaUrl.isNullOrEmpty()) {
+                        return@use resolveRelative(metaUrl, targetUrl)
+                    }
+
+                    if (body.contains("eval(function(p,a,c")) {
+                        val unpacked = PACKED_REGEX.findAll(body).mapNotNull { m ->
+                            runCatching { JsUnpacker.unpackAndCombine(m.value) }.getOrNull()
+                        }.joinToString("\n")
+
+                        val jsLocUnpacked = Regex("""(?:window\.|location\.)(?:href|replace)\s*=\s*["']([^"']+)["']""")
+                            .find(unpacked)?.groupValues?.get(1)
+                        if (!jsLocUnpacked.isNullOrEmpty()) {
+                            return@use resolveRelative(jsLocUnpacked, targetUrl)
+                        }
+                        val iframeUnpacked = Regex("""<iframe[^>]+src=["']([^"']+)["']""")
+                            .find(unpacked)?.groupValues?.get(1)
+                        if (!iframeUnpacked.isNullOrEmpty()) {
+                            return@use resolveRelative(iframeUnpacked, targetUrl)
+                        }
+                    }
                 }
             }
             null
         }
     }.getOrNull()
 
+    private fun resolveRelative(url: String, base: String): String {
+        val clean = url.trim()
+        if (clean.startsWith("http://") || clean.startsWith("https://")) return clean
+        if (clean.startsWith("//")) return "https:$clean"
+        val baseObj = base.toHttpUrlOrNull() ?: return clean
+        if (clean.startsWith("/")) {
+            return "${baseObj.scheme}://${baseObj.host}$clean"
+        }
+        return "${baseObj.scheme}://${baseObj.host}/${clean.removePrefix("./")}"
+    }
+
     private suspend fun videosFromTurboVid(url: String): List<Video> {
         val body = client.newCall(GET(url, headers)).awaitSuccess().bodyString()
 
-        val playlistUrl = URLPLAY_REGEX.find(body)?.groupValues?.get(1)
-            ?: DATA_HASH_REGEX.find(body)?.groupValues?.get(1)
-            ?: PLAYLIST_REGEX.find(body)?.value
+        val unpackedBody = if (body.contains("eval(function(p,a,c")) {
+            val unpackedScripts = PACKED_REGEX.findAll(body).mapNotNull { m ->
+                runCatching { JsUnpacker.unpackAndCombine(m.value) }.getOrNull()
+            }.joinToString("\n")
+            body + "\n" + unpackedScripts
+        } else {
+            body
+        }
+
+        val rawPlaylistUrl = URLPLAY_REGEX.find(unpackedBody)?.groupValues?.get(1)
+            ?: DATA_HASH_REGEX.find(unpackedBody)?.groupValues?.get(1)
+            ?: PLAYLIST_REGEX.find(unpackedBody)?.value
+            ?: M3U8_REGEX.find(unpackedBody)?.value
             ?: return emptyList()
 
+        val playlistUrl = resolveRelative(rawPlaylistUrl, url)
         if (playlistUrl.toHttpUrlOrNull() == null) return emptyList()
 
-        return playlistUtils.extractFromHls(
-            playlistUrl,
-            referer = url,
-            videoNameGen = { "TV - $it" },
-        ).distinctBy { it.videoUrl }
+        val baseUrlObj = url.toHttpUrlOrNull()
+        val referer = baseUrlObj?.let { "${it.scheme}://${it.host}/" } ?: url
+        val hlsHeaders = headers.newBuilder()
+            .set("Accept", "*/*")
+            .set("Accept-Language", "en-US,en;q=0.9")
+            .set("Origin", referer.removeSuffix("/"))
+            .set("Referer", referer)
+            .build()
+
+        return runCatching {
+            playlistUtils.extractFromHls(
+                playlistUrl,
+                referer = referer,
+                masterHeaders = hlsHeaders,
+                videoHeaders = hlsHeaders,
+                videoNameGen = { "TV - $it" },
+            ).distinctBy { it.videoUrl }
+        }.getOrDefault(emptyList())
     }
 
     private suspend fun videosFromStreamWishLike(url: String, prefix: String): List<Video> {
@@ -647,7 +761,7 @@ class SupJav(override val lang: String = "en") :
         val doc = Jsoup.parse(body, url)
 
         val scriptBody = doc.select("script").asSequence()
-            .map { it.data() }
+            .map { it.data().ifBlank { it.html() } }
             .firstNotNullOfOrNull { script ->
                 when {
                     script.contains("eval(function(p,a,c") ->
@@ -660,8 +774,9 @@ class SupJav(override val lang: String = "en") :
             }
             ?: run {
                 if (body.contains("eval(function(p,a,c")) {
-                    val packed = PACKED_REGEX.find(body)?.value
-                    packed?.let { JsUnpacker.unpackAndCombine(it) }
+                    PACKED_REGEX.findAll(body).mapNotNull { m ->
+                        runCatching { JsUnpacker.unpackAndCombine(m.value) }.getOrNull()
+                    }.joinToString("\n").ifBlank { null }
                 } else {
                     null
                 }
@@ -672,16 +787,12 @@ class SupJav(override val lang: String = "en") :
         val referer = baseUrlObj?.let { "${it.scheme}://${it.host}/" } ?: url
 
         val masterUrls = PLAYLIST_REGEX.findAll(scriptBody).map { it.value }.toList()
+            .ifEmpty { M3U8_REGEX.findAll(scriptBody).map { it.value }.toList() }
         if (masterUrls.isEmpty()) return emptyList()
 
         val videos = mutableListOf<Video>()
         for (masterUrl in masterUrls) {
-            val absMasterUrl = when {
-                masterUrl.startsWith("http://") || masterUrl.startsWith("https://") -> masterUrl
-                masterUrl.startsWith("//") -> "https:$masterUrl"
-                masterUrl.startsWith("/") && baseUrlObj != null -> "${baseUrlObj.scheme}://${baseUrlObj.host}$masterUrl"
-                else -> masterUrl
-            }
+            val absMasterUrl = resolveRelative(masterUrl, url)
             val hlsHeaders = headers.newBuilder()
                 .set("Accept", "*/*")
                 .set("Accept-Language", "en-US,en;q=0.9")
@@ -731,12 +842,22 @@ class SupJav(override val lang: String = "en") :
 
         return runCatching {
             val body = client.newCall(GET(cleanUrl, headers)).awaitSuccess().bodyString()
-            val m3u8Urls = M3U8_REGEX.findAll(body).map { it.value }.toList()
+            val unpackedBody = if (body.contains("eval(function(p,a,c")) {
+                val unpackedScripts = PACKED_REGEX.findAll(body).mapNotNull { m ->
+                    runCatching { JsUnpacker.unpackAndCombine(m.value) }.getOrNull()
+                }.joinToString("\n")
+                body + "\n" + unpackedScripts
+            } else {
+                body
+            }
+
+            val m3u8Urls = M3U8_REGEX.findAll(unpackedBody).map { it.value }.toList()
             val videos = mutableListOf<Video>()
             for (m3u8 in m3u8Urls) {
+                val absM3u8 = resolveRelative(m3u8, cleanUrl)
                 val extracted = runCatching {
                     playlistUtils.extractFromHls(
-                        m3u8,
+                        absM3u8,
                         referer = embedHost,
                         masterHeaders = hlsHeaders,
                         videoHeaders = hlsHeaders,
@@ -748,12 +869,22 @@ class SupJav(override val lang: String = "en") :
             }
             if (videos.isNotEmpty()) return@runCatching videos
 
-            val doc = Jsoup.parse(body, cleanUrl)
+            val doc = Jsoup.parse(unpackedBody, cleanUrl)
+            val directSrc = doc.select("video source[src], video[src]").firstOrNull()?.let {
+                it.attr("src").ifBlank { it.attr("data-src") }
+            }
+            if (!directSrc.isNullOrBlank()) {
+                val absDirect = resolveRelative(directSrc, cleanUrl)
+                if (absDirect.startsWith("http")) {
+                    return@runCatching listOf(Video(absDirect, "$hoster - Direct", absDirect, headers = hlsHeaders))
+                }
+            }
+
             val subIframe = doc.selectFirst("iframe[src], iframe[data-src]")?.let {
                 it.attr("data-src").ifBlank { it.attr("src") }
             }
             if (!subIframe.isNullOrEmpty() && subIframe != cleanUrl) {
-                val absSub = if (subIframe.startsWith("//")) "https:$subIframe" else subIframe
+                val absSub = resolveRelative(subIframe, cleanUrl)
                 return@runCatching videosFromPlayer(hoster to absSub)
             }
             emptyList()
@@ -772,7 +903,11 @@ class SupJav(override val lang: String = "en") :
         host.contains("fst") ||
         host.contains("embedwish") ||
         host.contains("mwish") ||
-        host.contains("wishembed")
+        host.contains("wishembed") ||
+        host.contains("sfast") ||
+        host.contains("filelions") ||
+        host.contains("lion") ||
+        host.contains("jwplayer")
 
     private fun isTurboVidHost(host: String): Boolean = host.contains("turbovid") ||
         host.contains("emturbovid") ||
@@ -810,6 +945,8 @@ class SupJav(override val lang: String = "en") :
     }
 
     companion object {
+        private const val DEFAULT_USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
+
         const val PREFIX_SEARCH = "id:"
 
         private const val PROTECTOR_URL = "https://lk1.supremejav.com"
