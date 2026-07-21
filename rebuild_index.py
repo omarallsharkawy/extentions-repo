@@ -95,7 +95,7 @@ for apk in sorted(APK_DIR.glob("*.apk")):
         {
             "name": name,
             "pkg": pkg,
-            "apk": f"apk/{apk.name}",
+            "apk": f"https://raw.githubusercontent.com/omarallsharkawy/extentions-repo/main/apk/{apk.name}",
             "lang": lang,
             "code": code,
             "version": ver,
@@ -104,7 +104,7 @@ for apk in sorted(APK_DIR.glob("*.apk")):
         }
     )
 
-assert all(e["apk"].startswith("apk/") for e in entries), "apk fields must start with apk/"
+assert all(e["apk"].startswith("https://") for e in entries), "apk fields must start with https://"
 (ROOT / "index.min.json").write_bytes(
     json.dumps(entries, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
 )
