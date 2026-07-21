@@ -377,7 +377,7 @@ class SupJav(override val lang: String = "en") :
         val episode = SEpisode.create().apply {
             name = "JAV"
             episode_number = 1F
-            url = response.request.url.encodedPath
+            setUrlWithoutDomain(response.request.url.toString())
         }
 
         return listOf(episode)
@@ -388,6 +388,21 @@ class SupJav(override val lang: String = "en") :
     override fun episodeFromElement(element: Element): SEpisode = SEpisode.create().apply {
         name = "JAV"
         episode_number = 1F
+    }
+
+    override fun animeDetailsRequest(anime: SAnime): Request {
+        val url = if (anime.url.startsWith("http")) anime.url else baseUrl + anime.url
+        return GET(url, headers)
+    }
+
+    override fun episodeListRequest(anime: SAnime): Request {
+        val url = if (anime.url.startsWith("http")) anime.url else baseUrl + anime.url
+        return GET(url, headers)
+    }
+
+    override fun videoListRequest(episode: SEpisode): Request {
+        val url = if (episode.url.startsWith("http")) episode.url else baseUrl + episode.url
+        return GET(url, headers)
     }
 
     // ============================ Video Links =============================
@@ -434,7 +449,25 @@ class SupJav(override val lang: String = "en") :
             }
             .distinctBy { it.second }
 
-        return iframes.parallelCatchingFlatMapBlocking(::videosFromPlayer)
+        val iframeVideos = iframes.parallelCatchingFlatMapBlocking(::videosFromPlayer)
+        if (iframeVideos.isNotEmpty()) return iframeVideos
+
+        // Last resort: scan entire HTML body text for protector parameters, c=, l=, data-link or direct embed URLs
+        val htmlBody = doc.outerHtml()
+        val regexLinks = Regex("""(?:data-link|data-url|data-src|href|src)\s*=\s*["']([^"']+)["']""")
+            .findAll(htmlBody)
+            .map { it.groupValues[1].trim() }
+            .filter { link ->
+                link.contains("supjav.php") || link.contains("c=") || link.contains("l=") ||
+                    link.contains("streamtape") || link.contains("voe") || link.contains("dood") ||
+                    link.contains("mixdrop") || link.contains("uqload") || link.contains("vidhide") ||
+                    link.contains("streamwish") || link.contains("turbovid") || link.contains("fc2stream")
+            }
+            .map { "SERVER" to it }
+            .distinctBy { it.second }
+            .toList()
+
+        return regexLinks.parallelCatchingFlatMapBlocking(::videosFromPlayer)
     }
 
     private val playlistUtils by lazy { PlaylistUtils(client, headers) }
