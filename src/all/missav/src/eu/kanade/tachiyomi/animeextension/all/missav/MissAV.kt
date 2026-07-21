@@ -72,6 +72,8 @@ class MissAV :
         PlaylistUtils(client, docHeaders)
     }
 
+    private fun popularAnimeNextPageSelector() = "a[rel=next], a[aria-label*=Next], a.next, div.pagination a.next, div.pagination span.current + a, button[aria-label*=Next], a:contains(Next)"
+
     override fun popularAnimeRequest(page: Int) = GET("$baseUrl/en/today-hot?page=$page", docHeaders)
 
     override fun popularAnimeParse(response: Response): AnimesPage {
@@ -156,7 +158,7 @@ class MissAV :
             }
         }
 
-        val hasNextPage = document.selectFirst("a[rel=next], a[aria-label*=Next], a.next, div.pagination a.next, div.pagination span.current + a, button[aria-label*=Next]") != null
+        val hasNextPage = document.selectFirst(popularAnimeNextPageSelector()) != null
         return AnimesPage(entries, hasNextPage)
     }
 
@@ -266,7 +268,10 @@ class MissAV :
             ?.takeIf { it.contains("function(p,a,c,k,e,d)") }
             ?: document.select("script").asSequence()
                 .map { it.data() }
-                .firstOrNull { it.contains("function(p,a,c,k,e,d)") && it.contains("m3u8") }
+                .firstOrNull { it.contains("function(p,a,c,k,e,d)") && (it.contains("m3u8") || it.contains("source") || it.contains("surrogate") || it.contains("hls")) }
+            ?: document.select("script").asSequence()
+                .map { it.data() }
+                .firstOrNull { it.contains("m3u8") || it.contains("source") || it.contains("surrogate") || it.contains("hls") }
             ?: return emptyList()
 
         val unpacked = Unpacker.unpack(packedScript).ifEmpty {
@@ -290,13 +295,15 @@ class MissAV :
     /**
      * Packed player bootstrap unpacks to:
      * `source="https://.../playlist.m3u8";source842=".../720p/video.m3u8";source1280="..."`
+     * or `surrogate="https://..."` / `m3u8="..."`
      */
     private fun extractMasterPlaylist(script: String): String? {
-        val fromSource = M3U8_SOURCE_REGEX.find(script)?.groupValues?.get(1)
+        val cleanScript = script.replace("\\/", "/")
+        val fromSource = M3U8_SOURCE_REGEX.find(cleanScript)?.groupValues?.get(1)
         if (!fromSource.isNullOrBlank()) return fromSource
 
         // Prefer master playlist.m3u8, then any quality video.m3u8.
-        val all = M3U8_URL_REGEX.findAll(script).map { it.value }.distinct().toList()
+        val all = M3U8_URL_REGEX.findAll(cleanScript).map { it.value }.distinct().toList()
         return all.firstOrNull { it.contains("playlist.m3u8") }
             ?: all.firstOrNull()
     }
@@ -376,7 +383,7 @@ class MissAV :
         private val regexNumberOnly = Regex("^\\d+$")
 
         private val M3U8_SOURCE_REGEX by lazy {
-            Regex("""source\s*=\s*["'](https?://[^"']+\.m3u8[^"']*)["']""")
+            Regex("""(?:source|surrogate|m3u8|hls)\s*=\s*["'](https?://[^"']+\.m3u8[^"']*)["']""")
         }
         private val M3U8_URL_REGEX by lazy {
             Regex("""https?://[^\s"'\\]+\.m3u8[^\s"'\\]*""")

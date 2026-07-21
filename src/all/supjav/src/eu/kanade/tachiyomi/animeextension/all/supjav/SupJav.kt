@@ -2,9 +2,13 @@ package eu.kanade.tachiyomi.animeextension.all.supjav
 
 import androidx.preference.ListPreference
 import androidx.preference.PreferenceScreen
+import aniyomi.lib.doodextractor.DoodExtractor
+import aniyomi.lib.mixdropextractor.MixDropExtractor
 import aniyomi.lib.playlistutils.PlaylistUtils
 import aniyomi.lib.streamtapeextractor.StreamTapeExtractor
 import aniyomi.lib.streamwishextractor.StreamWishExtractor
+import aniyomi.lib.uqloadextractor.UqloadExtractor
+import aniyomi.lib.vidhideextractor.VidHideExtractor
 import aniyomi.lib.voeextractor.VoeExtractor
 import eu.kanade.tachiyomi.animesource.ConfigurableAnimeSource
 import eu.kanade.tachiyomi.animesource.model.AnimeFilter
@@ -110,7 +114,9 @@ class SupJav(override val lang: String = "en") :
         "div.pagination span.current + a, div.pagination span.page-numbers.current + a, div.pagination a.current + a, " +
         "ul.pagination li.active + li a, nav.pagination a.next, div.nav-links a.next, " +
         "a.next.page-numbers, a.next, a[rel=next], a[rel=\"next\"], " +
-        ".pagination .current + a, .pagination .active + li a"
+        ".pagination .current + a, .pagination .active + li a, " +
+        "div.pagination a.nextpostslink, div.pagination a:contains(Next), div.pagination a:contains(›), div.pagination a:contains(»), " +
+        "div.pagination a:contains(التالي), div.pagination a:contains(الأخيرة)"
 
     private fun parseAnimePage(document: Document, selector: String): AnimesPage {
         val animeElements = document.select(selector)
@@ -122,23 +128,38 @@ class SupJav(override val lang: String = "en") :
             return AnimesPage(emptyList(), false)
         }
 
-        val hasNextPage = popularAnimeNextPageSelector().let { nextSelector ->
-            val nextEl = document.select(nextSelector).firstOrNull()
+        val hasNextPage = run {
+            val nextSelector = popularAnimeNextPageSelector()
+            val nextEl = document.select(nextSelector).firstOrNull { el -> el.hasAttr("href") }
             if (nextEl != null) {
                 true
             } else {
-                val currentEl = document.selectFirst("div.pagination .current, ul.pagination .active, .pagination span.current, .pagination .current, .pagination .active")
+                val currentEl = document.selectFirst(
+                    "div.pagination .current, ul.pagination .active, .pagination span.current, " +
+                        ".pagination .current, .pagination .active, [aria-current=page]",
+                )
                 val currentNum = currentEl?.text()?.trim()?.toIntOrNull()
+                    ?: document.selectFirst("div.pagination span.current, .pagination .current")?.text()?.trim()?.toIntOrNull()
+
                 if (currentNum != null) {
-                    document.select("div.pagination a, ul.pagination a, .pagination a").any { a ->
-                        val pageNum = a.text().trim().toIntOrNull()
+                    val pageNumRegex = Regex("""/page/(\d+)|[?&](?:page|paged)=(\d+)""")
+                    document.select("div.pagination a, ul.pagination a, .pagination a, nav.pagination a, .nav-links a").any { a ->
+                        val textNum = a.text().trim().toIntOrNull()
+                        val href = a.attr("href")
+                        val hrefNum = pageNumRegex.find(href)?.let { m ->
+                            m.groupValues[1].ifEmpty { m.groupValues[2] }.toIntOrNull()
+                        }
+                        val pageNum = textNum ?: hrefNum
                         pageNum != null && pageNum > currentNum
                     }
                 } else {
-                    false
+                    document.select("div.pagination a, ul.pagination a, .pagination a, nav.pagination a, .nav-links a").any { a ->
+                        val href = a.attr("href")
+                        href.contains("/page/") || a.hasClass("next") || a.attr("rel") == "next"
+                    }
                 }
             }
-        } ?: false
+        }
 
         return AnimesPage(animes, hasNextPage)
     }
@@ -359,22 +380,37 @@ class SupJav(override val lang: String = "en") :
     override fun videoListParse(response: Response): List<Video> {
         val doc = response.useAsJsoup()
 
-        val players = doc.select("div.btnst a[data-link], div.btnst > a")
+        val players = doc.select("div.btnst a[data-link], div.btnst > a, div.btns a[data-link], div.btns > a")
             .mapNotNull { el ->
                 val name = el.ownText().ifBlank { el.text() }.trim().uppercase()
-                val rawLink = el.attr("data-link").trim()
-                if (name.isEmpty() || rawLink.isEmpty()) return@mapNotNull null
-                name to rawLink.reversed()
+                val rawLink = el.attr("data-link").ifBlank { el.attr("href") }.trim()
+                if (name.isEmpty() || rawLink.isEmpty() || rawLink.startsWith("javascript")) return@mapNotNull null
+                name to rawLink
             }
             .distinctBy { it.second }
 
-        return players.parallelCatchingFlatMapBlocking(::videosFromPlayer)
+        val videoList = players.parallelCatchingFlatMapBlocking(::videosFromPlayer)
+        if (videoList.isNotEmpty()) return videoList
+
+        // Fallback to checking embedded iframes in post body
+        val iframes = doc.select("iframe[src], iframe[data-src], div.post-content iframe, div.player-wrap iframe, div#dz_video iframe")
+            .mapNotNull { el ->
+                val src = el.attr("data-src").ifBlank { el.attr("src") }.trim()
+                if (src.isBlank() || src.startsWith("javascript")) null else "EMBED" to src
+            }
+            .distinctBy { it.second }
+
+        return iframes.parallelCatchingFlatMapBlocking(::videosFromPlayer)
     }
 
     private val playlistUtils by lazy { PlaylistUtils(client, headers) }
     private val streamtapeExtractor by lazy { StreamTapeExtractor(client) }
     private val streamwishExtractor by lazy { StreamWishExtractor(client, headers) }
     private val voeExtractor by lazy { VoeExtractor(client, headers) }
+    private val doodExtractor by lazy { DoodExtractor(client) }
+    private val mixdropExtractor by lazy { MixDropExtractor(client) }
+    private val uqloadExtractor by lazy { UqloadExtractor(client) }
+    private val vidhideExtractor by lazy { VidHideExtractor(client, headers) }
 
     private val protectorHeaders by lazy {
         super.headersBuilder().set("Referer", "$PROTECTOR_URL/").build()
@@ -385,48 +421,78 @@ class SupJav(override val lang: String = "en") :
     }
 
     private suspend fun videosFromPlayer(player: Pair<String, String>): List<Video> {
-        val (hoster, id) = player
-        val url = resolveProtectorRedirect(id) ?: return emptyList()
+        val (hoster, rawLink) = player
+        val url = resolveProtectorRedirect(rawLink) ?: return emptyList()
         val host = url.toHttpUrlOrNull()?.host.orEmpty().lowercase()
 
-        return when {
-            hoster == "ST" || host.contains("streamtape") || host.contains("strtape") ||
-                host.contains("tapecontent") ->
-                streamtapeExtractor.videosFromUrl(url, quality = "ST")
+        return runCatching {
+            when {
+                hoster == "ST" || host.contains("streamtape") || host.contains("strtape") ||
+                    host.contains("tapecontent") ->
+                    streamtapeExtractor.videosFromUrl(url, quality = "ST")
 
-            hoster == "VOE" || host.contains("voe") ->
-                voeExtractor.videosFromUrl(url, prefix = "VOE ")
+                hoster == "VOE" || host.contains("voe") ->
+                    voeExtractor.videosFromUrl(url, prefix = "VOE ")
 
-            hoster == "FST" || isStreamWishLikeHost(host) ->
-                videosFromStreamWishLike(url, "FST")
+                hoster == "DS" || hoster == "DOOD" || host.contains("dood") ||
+                    host.contains("ds2play") || host.contains("doodstream") ->
+                    doodExtractor.videosFromUrl(url)
 
-            hoster == "TV" || isTurboVidHost(host) ->
-                videosFromTurboVid(url)
+                hoster == "MD" || hoster == "MIXDROP" || host.contains("mixdrop") ->
+                    mixdropExtractor.videoFromUrl(url, prefix = "MixDrop - ")
 
-            else -> {
-                videosFromTurboVid(url)
-                    .ifEmpty { videosFromStreamWishLike(url, hoster.ifBlank { host }) }
+                hoster == "UQ" || hoster == "UQLOAD" || host.contains("uqload") ->
+                    uqloadExtractor.videosFromUrl(url, prefix = "Uqload - ")
+
+                hoster == "VH" || host.contains("vidhide") || host.contains("hide") ->
+                    vidhideExtractor.videosFromUrl(url)
+
+                hoster == "FST" || isStreamWishLikeHost(host) ->
+                    videosFromStreamWishLike(url, "FST")
+
+                hoster == "TV" || isTurboVidHost(host) ->
+                    videosFromTurboVid(url)
+
+                else -> {
+                    videosFromTurboVid(url)
+                        .ifEmpty { videosFromStreamWishLike(url, hoster.ifBlank { host }) }
+                }
             }
-        }
+        }.getOrDefault(emptyList())
     }
 
-    private suspend fun resolveProtectorRedirect(id: String): String? {
-        val response = noRedirectClient
+    private suspend fun resolveProtectorRedirect(rawLink: String): String? {
+        if (rawLink.startsWith("http://") || rawLink.startsWith("https://")) {
+            return rawLink
+        }
+        if (rawLink.startsWith("//")) {
+            return "https:$rawLink"
+        }
+
+        val reversedId = rawLink.reversed()
+        val resReversed = fetchProtectorLocation(reversedId)
+        if (resReversed != null) return resReversed
+
+        return fetchProtectorLocation(rawLink)
+    }
+
+    private suspend fun fetchProtectorLocation(id: String): String? = runCatching {
+        noRedirectClient
             .newCall(GET("$PROTECTOR_URL/supjav.php?c=$id", protectorHeaders))
             .await()
-
-        return response.use { resp ->
-            (resp.header("location") ?: resp.header("Location"))
-                ?.trim()
-                ?.takeIf { it.startsWith("http") }
-        }
-    }
+            .use { resp ->
+                (resp.header("location") ?: resp.header("Location"))
+                    ?.trim()
+                    ?.takeIf { it.startsWith("http") }
+            }
+    }.getOrNull()
 
     private suspend fun videosFromTurboVid(url: String): List<Video> {
         val body = client.newCall(GET(url, headers)).awaitSuccess().bodyString()
 
         val playlistUrl = URLPLAY_REGEX.find(body)?.groupValues?.get(1)
             ?: DATA_HASH_REGEX.find(body)?.groupValues?.get(1)
+            ?: PLAYLIST_REGEX.find(body)?.value
             ?: return emptyList()
 
         if (playlistUrl.toHttpUrlOrNull() == null) return emptyList()
@@ -439,7 +505,9 @@ class SupJav(override val lang: String = "en") :
     }
 
     private suspend fun videosFromStreamWishLike(url: String, prefix: String): List<Video> {
-        val fromExtractor = streamwishExtractor.videosFromUrl(url) { "$prefix - $it" }
+        val fromExtractor = runCatching {
+            streamwishExtractor.videosFromUrl(url) { "$prefix - $it" }
+        }.getOrDefault(emptyList())
         if (fromExtractor.isNotEmpty()) return fromExtractor
 
         val body = client.newCall(GET(url, headers)).awaitSuccess().bodyString()
@@ -452,7 +520,7 @@ class SupJav(override val lang: String = "en") :
                     script.contains("eval(function(p,a,c") ->
                         JsUnpacker.unpackAndCombine(script)
 
-                    script.contains("m3u8") -> script
+                    script.contains("m3u8") || script.contains("master.txt") || script.contains("file:") -> script
 
                     else -> null
                 }
@@ -467,14 +535,32 @@ class SupJav(override val lang: String = "en") :
             }
             ?: return emptyList()
 
-        val masterUrl = M3U8_REGEX.find(scriptBody)?.value ?: return emptyList()
-        val referer = url.toHttpUrlOrNull()?.let { "${it.scheme}://${it.host}/" } ?: url
+        val baseUrlObj = url.toHttpUrlOrNull()
+        val referer = baseUrlObj?.let { "${it.scheme}://${it.host}/" } ?: url
 
-        return playlistUtils.extractFromHls(
-            playlistUrl = masterUrl,
-            referer = referer,
-            videoNameGen = { "$prefix - $it" },
-        )
+        val masterUrls = PLAYLIST_REGEX.findAll(scriptBody).map { it.value }.toList()
+        if (masterUrls.isEmpty()) return emptyList()
+
+        val videos = mutableListOf<Video>()
+        for (masterUrl in masterUrls) {
+            val absMasterUrl = when {
+                masterUrl.startsWith("http://") || masterUrl.startsWith("https://") -> masterUrl
+                masterUrl.startsWith("//") -> "https:$masterUrl"
+                masterUrl.startsWith("/") && baseUrlObj != null -> "${baseUrlObj.scheme}://${baseUrlObj.host}$masterUrl"
+                else -> masterUrl
+            }
+            val extracted = runCatching {
+                playlistUtils.extractFromHls(
+                    playlistUrl = absMasterUrl,
+                    referer = referer,
+                    videoNameGen = { "$prefix - $it" },
+                )
+            }.getOrDefault(emptyList())
+            videos.addAll(extracted)
+            if (videos.isNotEmpty()) break
+        }
+
+        return videos.distinctBy { it.videoUrl }
     }
 
     private fun isStreamWishLikeHost(host: String): Boolean = host.contains("fc2stream") ||
@@ -532,6 +618,9 @@ class SupJav(override val lang: String = "en") :
             Regex("""data-hash\s*=\s*["'](https?://[^"']+)["']""", RegexOption.IGNORE_CASE)
         }
         private val M3U8_REGEX by lazy { Regex("""https?://[^"'\s\\]+m3u8[^"'\s\\]*""") }
+        private val PLAYLIST_REGEX by lazy {
+            Regex("""https?://[^"'\s\\]+(?:m3u8|master\.txt)[^"'\s\\]*|/stream/[^"'\s\\]+""")
+        }
         private val PACKED_REGEX by lazy {
             Regex("""eval\(function\(p,a,c,k,e,d\).*?\.split\('\|'\)\)\)""", RegexOption.DOT_MATCHES_ALL)
         }

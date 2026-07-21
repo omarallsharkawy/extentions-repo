@@ -76,9 +76,8 @@ class PornHub :
 
     override fun popularAnimeRequest(page: Int): Request = GET(browseUrl(page, sort = "ht"), headers)
 
-    override fun popularAnimeSelector(): String = "li.pcVideoListItem.js-pop.videoblock:not(.mockNsfwThumb), " +
-        "li.pcVideoListItem.videoblock:not(.mockNsfwThumb), " +
-        "li.videoBox:not(.noVideo), ul#videoCategory li.videoblock"
+    override fun popularAnimeSelector(): String = "li.pcVideoListItem:not(.mockNsfwThumb), " +
+        "li.videoBox:not(.noVideo), ul#videoCategory li.videoblock, ul#videoSearchResult li.videoblock"
 
     override fun popularAnimeFromElement(element: Element): SAnime = SAnime.create().apply {
         val link = element.selectFirst("div.phimage a, a.linkVideoThumb, a.thumbnailTitle, a[href*=view_video]")
@@ -109,8 +108,10 @@ class PornHub :
     }
 
     override fun popularAnimeNextPageSelector(): String = "li.page_next:not(.page_disabled):not(.disabled) a, " +
-        "a.page_next:not(.disabled), a[rel=next]:not(.disabled), li.next:not(.disabled) a, a.next:not(.disabled), " +
-        "a:has(i.ph-icon-chevron-right):not(.disabled), div.pagination li.active + li a, div.pagination span.current + a"
+        "li.page_next:not(.page_disabled):not(.disabled), a.page_next:not(.disabled), a[rel=next]:not(.disabled), " +
+        "link[rel=next], li.next:not(.disabled) a, a.next:not(.disabled), " +
+        "a:has(i.ph-icon-chevron-right):not(.disabled), div.pagination li.active + li a, ul.pagination li.active + li a, " +
+        "div.pagination3 li.active + li a, div.pagination span.current + a"
 
     override fun popularAnimeParse(response: Response): AnimesPage {
         val document = response.asJsoup()
@@ -118,7 +119,8 @@ class PornHub :
             .map { popularAnimeFromElement(it) }
             .filter { it.url.isNotBlank() && it.title.isNotBlank() }
             .distinctBy { it.url }
-        val hasNext = document.selectFirst(popularAnimeNextPageSelector()) != null && animes.isNotEmpty()
+        val isLastPage = document.selectFirst("li.page_next.page_disabled, li.page_next.disabled, li.next.disabled") != null
+        val hasNext = !isLastPage && (document.selectFirst(popularAnimeNextPageSelector()) != null || animes.size >= 20) && animes.isNotEmpty()
         return AnimesPage(animes, hasNext)
     }
 
@@ -258,7 +260,23 @@ class PornHub :
             .build()
 
         val videos = mutableListOf<Video>()
-        val definitions = parseMediaDefinitions(flashvars, html)
+        var definitions = parseMediaDefinitions(flashvars, html)
+
+        if (definitions.isEmpty()) {
+            val doc = org.jsoup.Jsoup.parse(html, pageUrl)
+            val iframeUrl = doc.selectFirst("iframe[src*=/embed/], iframe[src*=pornhub]")?.attr("abs:src")
+            if (!iframeUrl.isNullOrBlank()) {
+                try {
+                    client.newCall(GET(iframeUrl, headers)).execute().use { resp ->
+                        if (resp.isSuccessful) {
+                            val iframeHtml = resp.body.string()
+                            val iframeFlashvars = extractFlashvars(iframeHtml)
+                            definitions = parseMediaDefinitions(iframeFlashvars, iframeHtml)
+                        }
+                    }
+                } catch (_: Exception) {}
+            }
+        }
 
         // Split free direct streams vs tokenized get_media (MP4 fallback).
         val direct = mutableListOf<MediaDefinition>()
@@ -307,7 +325,7 @@ class PornHub :
                 .map { it.value.replace("\\/", "/") }
                 .distinct()
                 .forEach { url ->
-                    videos += extractHlsSafe(url, qualityHint = "")
+                    videos += extractHlsSafe(url, qualityHint = "", videoHeaders = videoHeaders)
                 }
         }
 
@@ -560,6 +578,7 @@ class PornHub :
         url: String,
         qualityHint: String,
         namePrefix: String = "",
+        videoHeaders: Headers = headers,
     ): List<Video> = try {
         playlistUtils.extractFromHls(
             url,
@@ -579,7 +598,7 @@ class PornHub :
             append("HLS")
             if (qualityHint.isNotBlank()) append(" $qualityHint")
         }.trim()
-        listOf(Video(url, label, url, headers))
+        listOf(Video(url, label, url, videoHeaders))
     }
 
     private fun fetchGetMedia(mediaUrl: String, pageUrl: String): List<MediaDefinition> {
@@ -627,7 +646,7 @@ class PornHub :
     }
 
     private fun extractFlashvars(html: String): String? {
-        val marker = Regex("""var\s+flashvars_\d+\s*=""")
+        val marker = Regex("""var\s+flashvars(?:_\d+)?\s*=|flashvars_\d+\s*=""")
         val match = marker.find(html) ?: return null
         val braceStart = html.indexOf('{', match.range.last)
         if (braceStart < 0) return null
@@ -694,7 +713,16 @@ class PornHub :
         val remote: Boolean? = null,
         val defaultQuality: Boolean? = null,
     ) {
-        fun resolvedUrl(): String? = videoUrl?.replace("\\/", "/")?.takeIf { it.isNotBlank() && it.startsWith("http") }
+        fun resolvedUrl(): String? {
+            val url = videoUrl?.replace("\\/", "/")?.trim() ?: return null
+            if (url.isBlank()) return null
+            return when {
+                url.startsWith("http://", ignoreCase = true) || url.startsWith("https://", ignoreCase = true) -> url
+                url.startsWith("//") -> "https:$url"
+                url.startsWith("/") -> "https://www.pornhub.com$url"
+                else -> null
+            }
+        }
 
         fun isHls(): Boolean = format.equals("hls", ignoreCase = true) ||
             resolvedUrl()?.contains(".m3u8") == true
@@ -735,7 +763,7 @@ class PornHub :
         private const val PAGE_SIZE = 20
 
         private val M3U8_REGEX =
-            Regex("""https:\\?/\\?/[^"'\s]+?master\.m3u8[^"'\s]*""")
+            Regex("""https?:\\?/\\?/[^"'\s]+?\.m3u8[^"'\s]*""")
 
         private val QUALITY_REGEX = Regex("""(\d{3,4})""")
 
