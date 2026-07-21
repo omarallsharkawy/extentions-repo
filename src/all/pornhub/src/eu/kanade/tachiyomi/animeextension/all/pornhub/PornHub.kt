@@ -94,6 +94,7 @@ class PornHub :
                 ?: img.attr("data-poster").ifBlank { null }
                 ?: img.attr("poster").ifBlank { null }
                 ?: img.attr("data-mediumthumb").ifBlank { null }
+                ?: img.attr("data-image").ifBlank { null }
                 ?: img.attr("data-src").ifBlank { null }
                 ?: img.attr("data-thumb_url").ifBlank { null }
                 ?: img.attr("data-smallthumb").ifBlank { null }
@@ -101,7 +102,7 @@ class PornHub :
         }
     }
 
-    override fun popularAnimeNextPageSelector(): String = "li.page_next a, a.page_next, a[rel=next], li.next a, a.next"
+    override fun popularAnimeNextPageSelector(): String = "li.page_next a, a.page_next, a[rel=next], li.next a, a.next, a:has(i.ph-icon-chevron-right)"
 
     override fun popularAnimeParse(response: Response): AnimesPage {
         val document = response.asJsoup()
@@ -109,8 +110,7 @@ class PornHub :
             .map { popularAnimeFromElement(it) }
             .filter { it.url.isNotBlank() && it.title.isNotBlank() }
             .distinctBy { it.url }
-        val hasNext = document.selectFirst("li.page_next a, a.page_next, a[rel=next], li.next a") != null ||
-            animes.size >= PAGE_SIZE
+        val hasNext = document.selectFirst(popularAnimeNextPageSelector()) != null
         return AnimesPage(animes, hasNext)
     }
 

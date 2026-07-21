@@ -29,12 +29,12 @@ import java.text.SimpleDateFormat
 import java.util.Locale
 
 /**
- * NxxHentai — https://nxxhentai.net/
+ * NxxHentai — https://nxxhentai.net/anime/
  *
- * DooPlay / Vortex theme: series under `/anime/`, episodes under `/episodes/`,
- * multi-server via `doo_player_ajax`. Filters: sort, year (`release`), genre.
- *
- * Cloudflare: use app NetworkHelper client + default UA (do not force desktop UA).
+ * DooPlay theme (same family as NxxHentai). Cloudflare is handled by the **app**
+ * NetworkHelper client (default UA + AndroidCookieJar WebView solver).
+ * Do not force a desktop Windows User-Agent — it makes CF “Verifying you are human”
+ * hang forever in the in-app WebView.
  */
 class NxxHentai :
     DooPlay(
@@ -203,15 +203,21 @@ class NxxHentai :
                 ?: poster?.attr("alt").orEmpty()
 
             genre = doc.select(
-                "div.sgeneros a, a[href*='/genre/'], a[href*='?genre='], " +
-                    "div.wp-content a[href*='/genre/']",
+                "div.sgeneros a, div.data a[href*='/genre/'], a[href*='?genre='], " +
+                    "div.wp-content a[href*='/genre/'], #info a[href*='genre']",
             ).eachText().map { it.trim() }.filter { it.isNotBlank() }.distinct().joinToString()
 
             description = buildString {
-                val paras = doc.select("div.wp-content p, #info p")
+                val paras = doc.select("div.wp-content p, #info p, div#info .wp-content p")
                     .map { it.text().trim() }
-                    .filter { it.length > 20 && !it.contains("Patreon", ignoreCase = true) }
+                    .filter { it.length > 20 }
                 if (paras.isNotEmpty()) append(paras.first())
+                val year = sheader?.selectFirst("span.date, .extra span")?.text()
+                    ?: doc.selectFirst("span.year")?.text()
+                if (!year.isNullOrBlank()) {
+                    if (isNotEmpty()) append("\n\n")
+                    append("Year: ").append(year)
+                }
             }.ifBlank { null }
 
             status = SAnime.COMPLETED
@@ -734,7 +740,7 @@ class NxxHentai :
         UriPartFilter(
             "تصفح",
             arrayOf(
-                Pair("قائمة الهنتاي /anime/", ""),
+                Pair("أنميات /anime/", ""),
                 Pair("أحدث الحلقات /episodes/", "episodes"),
                 Pair("أفلام /movies/", "movies"),
             ),
@@ -849,4 +855,11 @@ class NxxHentai :
             "streamhide", "filelions", "vidmoly", "smoothpre",
         )
     }
+}
+
+open class UriPartFilter(
+    displayName: String,
+    val vals: Array<Pair<String, String>>,
+) : AnimeFilter.Select<String>(displayName, vals.map { it.first }.toTypedArray()) {
+    fun toUriPart() = vals[state].second
 }

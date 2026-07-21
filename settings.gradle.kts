@@ -31,9 +31,9 @@ enableFeaturePreview("TYPESAFE_PROJECT_ACCESSORS")
 rootProject.name = "Yuzono-Anime"
 
 val targetModules = listOf(
-    "ar:aflamk1", "ar:anime4up", "ar:animerco", "ar:arabseed", "ar:arabshentai",
+    "ar:aflamk1", "ar:anime4up", "ar:animerco", "ar:arabseed",
     "ar:arabx", "ar:arabxn", "ar:cimaleek", "ar:cimalight", "ar:egydead",
-    "ar:faselhd", "ar:nxxhentai", "ar:okanime", "ar:sexalarab", "ar:sexmahali",
+    "ar:faselhd", "ar:okanime", "ar:sexalarab", "ar:sexmahali",
     "en:anikage", "en:animeparadise", "en:animetake", "en:hahomoe", "en:hanime", "en:hentaimama", "en:hexawatch",
     "en:hstream", "en:kayoanime", "en:kimoitv", "en:mapple", "en:myanime", "en:onetwothreeanime",
     "en:pinoymoviepedia", "en:rule34video", "en:uniquestream",

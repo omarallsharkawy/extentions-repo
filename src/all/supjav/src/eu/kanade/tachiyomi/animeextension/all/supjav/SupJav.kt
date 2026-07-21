@@ -55,9 +55,9 @@ class SupJav(override val lang: String = "en") :
     // ============================== Popular ===============================
     override fun popularAnimeRequest(page: Int): Request {
         val url = if (page > 1) {
-            "$baseUrl$langPath/popular/page/$page"
+            "$baseUrl$langPath/popular/page/$page/"
         } else {
-            "$baseUrl$langPath/popular"
+            "$baseUrl$langPath/popular/"
         }
         return GET(url, headers)
     }
@@ -67,24 +67,81 @@ class SupJav(override val lang: String = "en") :
     override fun popularAnimeFromElement(element: Element) = SAnime.create().apply {
         setUrlWithoutDomain(element.attr("href"))
 
-        element.selectFirst("img")?.run {
-            title = attr("alt")
-            val raw = attr("data-original").ifBlank { attr("data-src") }
-                .ifBlank { attr("data-lazy-src") }
-                .ifBlank { attr("src") }
-            thumbnail_url = if (raw.startsWith("http")) raw else absUrl(raw).ifBlank { raw }
+        val img = element.selectFirst("img")
+        title = img?.attr("alt")?.ifBlank { img.attr("title") }
+            ?.ifBlank { element.text() }
+            ?.ifBlank { element.attr("title") }
+            .orEmpty().trim()
+
+        img?.let {
+            val raw = it.attr("data-original")
+                .ifBlank { it.attr("data-src") }
+                .ifBlank { it.attr("data-lazy-src") }
+                .ifBlank { it.attr("data-cfsrc") }
+                .ifBlank { it.attr("srcset").substringBefore(" ").substringBefore(",") }
+                .ifBlank { it.attr("src") }
+
+            val cleanUrl = when {
+                raw.startsWith("http") -> raw
+
+                raw.startsWith("//") -> "https:$raw"
+
+                else -> it.absUrl("data-original")
+                    .ifBlank { it.absUrl("data-src") }
+                    .ifBlank { it.absUrl("src") }
+                    .ifBlank { raw }
+            }
+
+            thumbnail_url = cleanUrl.takeIf { url -> url.startsWith("http") && !url.contains("data:image") }
         }
     }
 
     override fun popularAnimeNextPageSelector() = "div.pagination a.next, div.pagination a.next.page-numbers, div.pagination a[rel=next], " +
         "div.pagination span.current + a, div.pagination span.page-numbers.current + a, div.pagination a.current + a, " +
         "ul.pagination li.active + li a, nav.pagination a.next, div.nav-links a.next, " +
-        "a.next.page-numbers, a.next, a[rel=next], a[rel=\"next\"]"
+        "a.next.page-numbers, a.next, a[rel=next], a[rel=\"next\"], " +
+        ".pagination .current + a, .pagination .active + li a"
+
+    private fun parseAnimePage(document: Document, selector: String): AnimesPage {
+        val animeElements = document.select(selector)
+        val animes = animeElements.mapNotNull { element ->
+            runCatching { popularAnimeFromElement(element) }.getOrNull()
+        }.filter { it.title.isNotBlank() && it.url.isNotBlank() }
+
+        if (animes.isEmpty()) {
+            return AnimesPage(emptyList(), false)
+        }
+
+        val hasNextPage = popularAnimeNextPageSelector()?.let { nextSelector ->
+            val nextEl = document.select(nextSelector).firstOrNull()
+            if (nextEl != null) {
+                true
+            } else {
+                val currentEl = document.selectFirst("div.pagination .current, ul.pagination .active, .pagination span.current, .pagination .current, .pagination .active")
+                val currentNum = currentEl?.text()?.trim()?.toIntOrNull()
+                if (currentNum != null) {
+                    document.select("div.pagination a, ul.pagination a, .pagination a").any { a ->
+                        val pageNum = a.text().trim().toIntOrNull()
+                        pageNum != null && pageNum > currentNum
+                    }
+                } else {
+                    false
+                }
+            }
+        } ?: false
+
+        return AnimesPage(animes, hasNextPage)
+    }
+
+    override fun popularAnimeParse(response: Response): AnimesPage {
+        val document = response.useAsJsoup()
+        return parseAnimePage(document, popularAnimeSelector())
+    }
 
     // =============================== Latest ===============================
     override fun latestUpdatesRequest(page: Int): Request {
         val url = if (page > 1) {
-            "$baseUrl$langPath/page/$page"
+            "$baseUrl$langPath/page/$page/"
         } else {
             "$baseUrl$langPath/"
         }
@@ -96,6 +153,11 @@ class SupJav(override val lang: String = "en") :
     override fun latestUpdatesFromElement(element: Element) = popularAnimeFromElement(element)
 
     override fun latestUpdatesNextPageSelector() = popularAnimeNextPageSelector()
+
+    override fun latestUpdatesParse(response: Response): AnimesPage {
+        val document = response.useAsJsoup()
+        return parseAnimePage(document, latestUpdatesSelector())
+    }
 
     // =============================== Search ===============================
     override suspend fun getSearchAnime(page: Int, query: String, filters: AnimeFilterList): AnimesPage {
@@ -169,28 +231,28 @@ class SupJav(override val lang: String = "en") :
 
         val basePath = when {
             starSlug.isNotBlank() -> {
-                if (page > 1) "$baseUrl$langPath/star/$starSlug/page/$page" else "$baseUrl$langPath/star/$starSlug"
+                if (page > 1) "$baseUrl$langPath/star/$starSlug/page/$page/" else "$baseUrl$langPath/star/$starSlug/"
             }
 
             makerSlug.isNotBlank() -> {
-                if (page > 1) "$baseUrl$langPath/maker/$makerSlug/page/$page" else "$baseUrl$langPath/maker/$makerSlug"
+                if (page > 1) "$baseUrl$langPath/maker/$makerSlug/page/$page/" else "$baseUrl$langPath/maker/$makerSlug/"
             }
 
             tagSlug.isNotBlank() -> {
-                if (page > 1) "$baseUrl$langPath/tag/$tagSlug/page/$page" else "$baseUrl$langPath/tag/$tagSlug"
+                if (page > 1) "$baseUrl$langPath/tag/$tagSlug/page/$page/" else "$baseUrl$langPath/tag/$tagSlug/"
             }
 
             categorySlug.isNotBlank() -> {
-                if (page > 1) "$baseUrl$langPath/category/$categorySlug/page/$page" else "$baseUrl$langPath/category/$categorySlug"
+                if (page > 1) "$baseUrl$langPath/category/$categorySlug/page/$page/" else "$baseUrl$langPath/category/$categorySlug/"
             }
 
             else -> {
                 when (sortOption) {
-                    1 -> if (page > 1) "$baseUrl$langPath/popular/page/$page" else "$baseUrl$langPath/popular"
-                    2 -> if (page > 1) "$baseUrl$langPath/popular/today/page/$page" else "$baseUrl$langPath/popular/today"
-                    3 -> if (page > 1) "$baseUrl$langPath/popular/week/page/$page" else "$baseUrl$langPath/popular/week"
-                    4 -> if (page > 1) "$baseUrl$langPath/popular/month/page/$page" else "$baseUrl$langPath/popular/month"
-                    else -> if (page > 1) "$baseUrl$langPath/page/$page" else "$baseUrl$langPath/"
+                    1 -> if (page > 1) "$baseUrl$langPath/popular/page/$page/" else "$baseUrl$langPath/popular/"
+                    2 -> if (page > 1) "$baseUrl$langPath/popular/today/page/$page/" else "$baseUrl$langPath/popular/today/"
+                    3 -> if (page > 1) "$baseUrl$langPath/popular/week/page/$page/" else "$baseUrl$langPath/popular/week/"
+                    4 -> if (page > 1) "$baseUrl$langPath/popular/month/page/$page/" else "$baseUrl$langPath/popular/month/"
+                    else -> if (page > 1) "$baseUrl$langPath/page/$page/" else "$baseUrl$langPath/"
                 }
             }
         }
@@ -208,6 +270,11 @@ class SupJav(override val lang: String = "en") :
     override fun searchAnimeFromElement(element: Element) = popularAnimeFromElement(element)
 
     override fun searchAnimeNextPageSelector() = popularAnimeNextPageSelector()
+
+    override fun searchAnimeParse(response: Response): AnimesPage {
+        val document = response.useAsJsoup()
+        return parseAnimePage(document, searchAnimeSelector())
+    }
 
     // ============================= Filters ===============================
     override fun getFilterList() = AnimeFilterList(
