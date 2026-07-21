@@ -95,7 +95,7 @@ for apk in sorted(APK_DIR.glob("*.apk")):
         {
             "name": name,
             "pkg": pkg,
-            "apk": apk.name,  # basename only
+            "apk": f"apk/{apk.name}",
             "lang": lang,
             "code": code,
             "version": ver,
@@ -104,7 +104,7 @@ for apk in sorted(APK_DIR.glob("*.apk")):
         }
     )
 
-assert all("/" not in e["apk"] for e in entries), "apk fields must be basenames"
+assert all(e["apk"].startswith("apk/") for e in entries), "apk fields must start with apk/"
 (ROOT / "index.min.json").write_bytes(
     json.dumps(entries, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
 )
