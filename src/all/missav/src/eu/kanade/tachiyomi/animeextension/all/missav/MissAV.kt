@@ -24,6 +24,7 @@ import keiyoushi.utils.parseAs
 import keiyoushi.utils.toJsonRequestBody
 import okhttp3.Headers
 import okhttp3.HttpUrl.Companion.toHttpUrl
+import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import okhttp3.Request
 import okhttp3.Response
 import org.jsoup.nodes.Document
@@ -283,10 +284,20 @@ class MissAV :
             ?: extractMasterPlaylist(packedScript)
             ?: return emptyList()
 
-        val hlsHeaders = videoHeaders(cookie)
+        val masterHost = masterPlaylist.toHttpUrlOrNull()?.let { "${it.scheme}://${it.host}/" } ?: "$baseUrl/"
+        val hlsHeaders = headers.newBuilder().apply {
+            set("Accept", "*/*")
+            set("Accept-Language", "en-US,en;q=0.9")
+            set("Origin", masterHost.removeSuffix("/"))
+            set("Referer", masterHost)
+            if (!cookie.isNullOrBlank()) {
+                set("Cookie", cookie)
+            }
+        }.build()
+
         return playlistExtractor.extractFromHls(
             masterPlaylist,
-            referer = "$baseUrl/",
+            referer = masterHost,
             masterHeaders = hlsHeaders,
             videoHeaders = hlsHeaders,
         )

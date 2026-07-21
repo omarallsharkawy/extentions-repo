@@ -636,10 +636,19 @@ class SupJav(override val lang: String = "en") :
                 masterUrl.startsWith("/") && baseUrlObj != null -> "${baseUrlObj.scheme}://${baseUrlObj.host}$masterUrl"
                 else -> masterUrl
             }
+            val hlsHeaders = headers.newBuilder()
+                .set("Accept", "*/*")
+                .set("Accept-Language", "en-US,en;q=0.9")
+                .set("Origin", referer.removeSuffix("/"))
+                .set("Referer", referer)
+                .build()
+
             val extracted = runCatching {
                 playlistUtils.extractFromHls(
                     playlistUrl = absMasterUrl,
                     referer = referer,
+                    masterHeaders = hlsHeaders,
+                    videoHeaders = hlsHeaders,
                     videoNameGen = { "$prefix - $it" },
                 )
             }.getOrDefault(emptyList())
@@ -654,11 +663,21 @@ class SupJav(override val lang: String = "en") :
         val cleanUrl = url.trim()
         if (!cleanUrl.startsWith("http")) return emptyList()
 
+        val embedHost = cleanUrl.toHttpUrlOrNull()?.let { "${it.scheme}://${it.host}/" } ?: url
+        val hlsHeaders = headers.newBuilder()
+            .set("Accept", "*/*")
+            .set("Accept-Language", "en-US,en;q=0.9")
+            .set("Origin", embedHost.removeSuffix("/"))
+            .set("Referer", embedHost)
+            .build()
+
         if (cleanUrl.contains(".m3u8", ignoreCase = true)) {
             return runCatching {
                 playlistUtils.extractFromHls(
                     cleanUrl,
-                    referer = url,
+                    referer = embedHost,
+                    masterHeaders = hlsHeaders,
+                    videoHeaders = hlsHeaders,
                     videoNameGen = { "$hoster - $it" },
                 )
             }.getOrDefault(emptyList())
@@ -672,7 +691,9 @@ class SupJav(override val lang: String = "en") :
                 val extracted = runCatching {
                     playlistUtils.extractFromHls(
                         m3u8,
-                        referer = cleanUrl,
+                        referer = embedHost,
+                        masterHeaders = hlsHeaders,
+                        videoHeaders = hlsHeaders,
                         videoNameGen = { "$hoster - $it" },
                     )
                 }.getOrDefault(emptyList())
