@@ -1,7 +1,7 @@
 ext {
     extName = 'MissAV'
     extClass = '.MissAV'
-    extVersionCode = 46
+    extVersionCode = 47
     isNsfw = true
 }
 
