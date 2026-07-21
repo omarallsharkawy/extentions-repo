@@ -444,8 +444,18 @@ class SupJav(override val lang: String = "en") :
             val players = collectPlayers(doc, body)
             if (players.isEmpty()) return@runCatching emptyList()
 
-            // Prefer sequential so one slow hoster does not cancel others via shared dispatcher quirks
-            val videoList = players.flatMap { player ->
+            // ST / FST first — TurboVid (TV) often serves ad-only playlists
+            val ordered = players.sortedBy { (name, _) ->
+                when (name) {
+                    "ST" -> 0
+                    "FST" -> 1
+                    "VOE" -> 2
+                    "TV" -> 9
+                    else -> 5
+                }
+            }
+
+            val videoList = ordered.flatMap { player ->
                 runCatching { kotlinx.coroutines.runBlocking { videosFromPlayer(player) } }
                     .getOrDefault(emptyList())
             }
@@ -661,10 +671,54 @@ class SupJav(override val lang: String = "en") :
             }
 
             rawVideos.map { video ->
-                val refererForVid = video.videoUrl?.toHttpUrlOrNull()?.let { "${it.scheme}://${it.host}/" } ?: url
-                video.copy(headers = cleanMediaHeaders(video.headers, refererForVid))
+                // Keep hoster-page Referer for CDN URLs (tapecontent, hls CDN).
+                // Using CDN host as Referer breaks StreamTape / FST auth.
+                val keepReferer = when (hoster) {
+                    "ST" -> "https://streamtape.com/"
+                    "FST" -> url
+                    "VOE" -> url
+                    "TV" -> url
+                    else -> url
+                }
+                val vidHeaders = video.headers ?: buildMediaHeaders(keepReferer)
+                video.copy(headers = fixPlaybackHeaders(vidHeaders, keepReferer, hoster))
             }
         }.getOrDefault(emptyList())
+    }
+
+    /** Playback headers: correct Referer/Origin for each hoster family. */
+    private fun fixPlaybackHeaders(base: Headers, embedOrReferer: String, hoster: String): Headers {
+        val builder = base.newBuilder()
+        builder.removeAll("Sec-Fetch-Dest")
+        builder.removeAll("Sec-Fetch-Mode")
+        builder.removeAll("Sec-Fetch-Site")
+        builder.removeAll("Sec-Fetch-User")
+        builder.removeAll("Upgrade-Insecure-Requests")
+        builder.set("User-Agent", appUserAgent())
+        builder.set("Accept", "*/*")
+
+        when (hoster) {
+            "ST" -> {
+                builder.set("Referer", "https://streamtape.com/")
+                builder.set("Origin", "https://streamtape.com")
+            }
+
+            "FST" -> {
+                // FST blocks embeds unless referer is the player page or supjav
+                val ref = embedOrReferer.ifBlank { "$baseUrl/" }
+                builder.set("Referer", if (ref.endsWith("/")) ref else "$ref/")
+                val origin = ref.toHttpUrlOrNull()?.let { "${it.scheme}://${it.host}" } ?: baseUrl
+                builder.set("Origin", origin)
+            }
+
+            else -> {
+                val ref = embedOrReferer.substringBefore('#')
+                val origin = ref.toHttpUrlOrNull()?.let { "${it.scheme}://${it.host}" }
+                builder.set("Referer", if (ref.endsWith("/")) ref else "$ref/")
+                if (origin != null) builder.set("Origin", origin)
+            }
+        }
+        return builder.build()
     }
 
     private fun isHexToken(value: String): Boolean = value.length >= 32 && value.all { it in '0'..'9' || it in 'a'..'f' || it in 'A'..'F' }
@@ -873,7 +927,7 @@ class SupJav(override val lang: String = "en") :
     }
 
     private suspend fun videosFromTurboVid(url: String): List<Video> {
-        // Strip fragment (#site@title) — only used by embed branding; confuses some parsers
+        // TV (TurboVid) frequently returns ad-only HLS (tiktok CDN). Keep as last resort only.
         val cleanUrl = url.substringBefore('#').ifBlank { url }
         val pageHeaders = buildMediaHeaders(cleanUrl)
         val body = runCatching {
@@ -899,15 +953,36 @@ class SupJav(override val lang: String = "en") :
         val playlistUrl = resolveRelative(rawPlaylistUrl, cleanUrl)
         if (playlistUrl.toHttpUrlOrNull() == null) return emptyList()
 
-        // HLS CDN: cdn.turboviplay.com / hls*.turbosplayer.com — referer = embed page
         val origin = cleanUrl.toHttpUrlOrNull()?.let { "${it.scheme}://${it.host}" } ?: "https://turbovidhls.com"
         val hlsHeaders = Headers.Builder()
             .set("User-Agent", appUserAgent())
             .set("Accept", "*/*")
-            .set("Accept-Language", "en-US,en;q=0.9")
             .set("Origin", origin)
             .set("Referer", if (cleanUrl.endsWith("/")) cleanUrl else "$cleanUrl/")
             .build()
+
+        // Probe playlist — drop if it's ad-only junk
+        val probe = runCatching {
+            client.newCall(GET(playlistUrl, hlsHeaders)).execute().bodyString()
+        }.getOrDefault("")
+        if (probe.contains("tiktokcdn", ignoreCase = true) ||
+            probe.contains("ad-site", ignoreCase = true)
+        ) {
+            return emptyList()
+        }
+
+        // If master points to another playlist, probe that too
+        val child = M3U8_REGEX.find(probe)?.value
+        if (!child.isNullOrBlank()) {
+            val childBody = runCatching {
+                client.newCall(GET(child, hlsHeaders)).execute().bodyString()
+            }.getOrDefault("")
+            if (childBody.contains("tiktokcdn", ignoreCase = true) ||
+                childBody.contains("ad-site", ignoreCase = true)
+            ) {
+                return emptyList()
+            }
+        }
 
         val fromPlaylist = runCatching {
             playlistUtils.extractFromHls(
@@ -919,115 +994,246 @@ class SupJav(override val lang: String = "en") :
             ).distinctBy { it.videoUrl }
         }.getOrDefault(emptyList())
 
-        if (fromPlaylist.isNotEmpty()) return fromPlaylist
-
-        // Always surface the master m3u8 so host list is not empty
-        return listOf(Video(playlistUrl, "TV - HLS", playlistUrl, headers = hlsHeaders))
+        return fromPlaylist.filter { v ->
+            val u = v.videoUrl.orEmpty()
+            !u.contains("tiktokcdn", ignoreCase = true) && !u.contains("ad-site", ignoreCase = true)
+        }
     }
 
-    /** Normalize streamtape.com/e/ID/filename.mp4 → /e/ID and extract. */
+    /**
+     * StreamTape modern page:
+     * ```
+     * robotlink.innerHTML = '//streamtape.com/get_video?i' + ('xcdd=ID&...').substring(2).substring(1);
+     * ```
+     * → https://streamtape.com/get_video?id=ID&...&stream=1  → 302 → tapecontent.net MP4
+     */
     private fun videosFromStreamTape(url: String): List<Video> {
         val clean = url.substringBefore('#').ifBlank { url }
         val id = Regex("""streamtape\.com/(?:e|v)/([A-Za-z0-9]+)""", RegexOption.IGNORE_CASE)
             .find(clean)?.groupValues?.get(1)
-            ?: clean.toHttpUrlOrNull()?.pathSegments?.getOrNull(1)
-        val embed = if (!id.isNullOrBlank()) "https://streamtape.com/e/$id" else clean
+            ?: clean.toHttpUrlOrNull()?.pathSegments?.firstOrNull { it.length in 8..20 && !it.contains('.') }
+        val embed = if (!id.isNullOrBlank()) "https://streamtape.com/e/$id/" else clean
+        val stHeaders = Headers.Builder()
+            .set("User-Agent", appUserAgent())
+            .set("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
+            .set("Referer", "https://streamtape.com/")
+            .set("Origin", "https://streamtape.com")
+            .build()
 
-        val fromLib = runCatching {
-            streamtapeExtractor.videosFromUrl(embed, quality = "ST")
-        }.getOrDefault(emptyList())
-        if (fromLib.isNotEmpty()) return fromLib
-
-        // Fallback: parse ideoolink / botlink / robotlink get_video paths
         return runCatching {
-            val body = client.newCall(GET(embed, buildMediaHeaders(embed))).execute().bodyString()
-            val path = Regex(
-                """(?:robotlink|botlink|ideoolink)[^>]*>\s*//?([^<]+get_video[^<]+)""",
-                RegexOption.IGNORE_CASE,
-            ).find(body)?.groupValues?.get(1)?.trim()
-                ?: Regex("""get_video\?id=[^"'\\\s]+""").find(body)?.value
+            val body = client.newCall(GET(embed, stHeaders)).execute().bodyString()
+            val playUrl = parseStreamTapePlayUrl(body) ?: return@runCatching emptyList()
 
-            if (path.isNullOrBlank()) return@runCatching emptyList()
-            val videoUrl = when {
+            val playHeaders = Headers.Builder()
+                .set("User-Agent", appUserAgent())
+                .set("Accept", "*/*")
+                .set("Referer", "https://streamtape.com/")
+                .set("Origin", "https://streamtape.com")
+                .build()
+
+            // Prefer final CDN MP4 (more reliable in ExoPlayer than intermediate get_video)
+            val finalUrl = runCatching {
+                noRedirectClient.newCall(GET(playUrl, playHeaders)).execute().use { resp ->
+                    val loc = resp.header("Location") ?: resp.header("location")
+                    if (!loc.isNullOrBlank() && loc.contains("http")) {
+                        resolveRelative(loc, playUrl)
+                    } else {
+                        null
+                    }
+                }
+            }.getOrNull()
+
+            val stream = finalUrl?.takeIf { it.startsWith("http") } ?: playUrl
+            listOf(Video(stream, "ST", stream, headers = playHeaders))
+        }.getOrDefault(emptyList())
+    }
+
+    private fun parseStreamTapePlayUrl(body: String): String? {
+        // Pattern A (current): prefix + ('xcd...').substring(n).substring(m)
+        val modern = Regex(
+            """(?:robotlink|botlink|ideoolink)[^;]{0,80}innerHTML\s*=\s*['"]([^'"]+)['"]\s*\+\s*\(['"]([^'"]+)['"]\)""" +
+                """(?:\.substring\((\d+)\))?(?:\.substring\((\d+)\))?""",
+            RegexOption.IGNORE_CASE,
+        ).find(body)
+
+        if (modern != null) {
+            var suffix = modern.groupValues[2]
+            val s1 = modern.groupValues[3].toIntOrNull()
+            val s2 = modern.groupValues[4].toIntOrNull()
+            if (s1 != null && s1 in 0 until suffix.length) suffix = suffix.substring(s1)
+            if (s2 != null && s2 in 0 until suffix.length) suffix = suffix.substring(s2)
+            // Legacy: substringAfter "+ ('xcd" style (old extractor)
+            if (suffix.startsWith("xcd", ignoreCase = true) && s1 == null) {
+                suffix = suffix.removePrefix("xcd").removePrefix("XCD")
+            }
+            var path = modern.groupValues[1] + suffix
+            path = path.replace(" ", "")
+            val url = when {
                 path.startsWith("http") -> path
                 path.startsWith("//") -> "https:$path"
                 path.startsWith("/") -> "https://streamtape.com$path"
                 else -> "https://$path"
+            }
+            return if (url.contains("stream=")) url else "$url&stream=1"
+        }
+
+        // Pattern B: static get_video in hidden div
+        val static = Regex(
+            """(?:robotlink|botlink|ideoolink)[^>]*>\s*(//?[^<]*get_video[^<]+)""",
+            RegexOption.IGNORE_CASE,
+        ).find(body)?.groupValues?.get(1)?.trim()
+            ?: Regex("""//streamtape\.com/get_video\?[^"'<\s]+""", RegexOption.IGNORE_CASE)
+                .find(body)?.value
+
+        if (!static.isNullOrBlank()) {
+            val url = when {
+                static.startsWith("http") -> static
+                static.startsWith("//") -> "https:$static"
+                static.startsWith("/") -> "https://streamtape.com$static"
+                else -> "https://$static"
             }.replace(" ", "")
-            // Streamtape needs &stream=1 for direct play
-            val playUrl = if (videoUrl.contains("stream=")) videoUrl else "$videoUrl&stream=1"
-            listOf(Video(playUrl, "ST", playUrl, headers = buildMediaHeaders(embed)))
-        }.getOrDefault(emptyList())
+            return if (url.contains("stream=")) url else "$url&stream=1"
+        }
+
+        // Pattern C: plain get_video?id=
+        val plain = Regex(
+            """get_video\?id=[A-Za-z0-9]+[^"'<\s]*""",
+            RegexOption.IGNORE_CASE,
+        ).find(body)?.value ?: return null
+        val url = "https://streamtape.com/$plain".replace(" ", "")
+        return if (url.contains("stream=")) url else "$url&stream=1"
     }
 
     private fun videosFromVoe(url: String, mediaHeaders: Headers): List<Video> {
         val clean = url.substringBefore('#').ifBlank { url }
+        // Follow intermediate voe.sx → mirror
+        val pageBody = runCatching {
+            client.newCall(GET(clean, mediaHeaders)).execute().bodyString()
+        }.getOrDefault("")
+        val redirect = Regex(
+            """window\.location\.href\s*=\s*['"](https?://[^'"]+)['"]""",
+            RegexOption.IGNORE_CASE,
+        ).find(pageBody)?.groupValues?.get(1)
+        val target = redirect?.takeIf { it.startsWith("http") } ?: clean
+        val headersForTarget = buildMediaHeaders(target)
+
         val fromLib = runCatching {
-            VoeExtractor(client, mediaHeaders).videosFromUrl(clean, prefix = "VOE ")
+            VoeExtractor(client, headersForTarget).videosFromUrl(target, prefix = "VOE ")
         }.getOrDefault(emptyList())
         if (fromLib.isNotEmpty()) return fromLib
 
-        // voe.sx often JS-redirects to alternate domains
-        return runCatching {
-            val body = client.newCall(GET(clean, mediaHeaders)).execute().bodyString()
-            val redirect = Regex(
-                """window\.location\.href\s*=\s*['"](https?://[^'"]+)['"]""",
-                RegexOption.IGNORE_CASE,
-            ).find(body)?.groupValues?.get(1)
-            if (!redirect.isNullOrBlank() && redirect != clean) {
-                VoeExtractor(client, buildMediaHeaders(redirect)).videosFromUrl(redirect, prefix = "VOE ")
-            } else {
-                emptyList()
-            }
-        }.getOrDefault(emptyList())
+        // Fallback: m3u8 / mp4 in page after redirect
+        val body2 = if (target == clean) {
+            pageBody
+        } else {
+            runCatching {
+                client.newCall(GET(target, headersForTarget)).execute().bodyString()
+            }.getOrDefault("")
+        }
+        val m3u8 = M3U8_REGEX.find(body2)?.value
+        if (!m3u8.isNullOrBlank()) {
+            return runCatching {
+                playlistUtils.extractFromHls(
+                    m3u8,
+                    referer = target,
+                    masterHeaders = headersForTarget,
+                    videoHeaders = headersForTarget,
+                    videoNameGen = { "VOE - $it" },
+                )
+            }.getOrDefault(emptyList())
+        }
+        return emptyList()
     }
 
     private suspend fun videosFromStreamWishLike(url: String, prefix: String): List<Video> {
-        val mediaHeaders = buildMediaHeaders(url)
+        val clean = url.substringBefore('#').ifBlank { url }
+        // FST (fc2stream / streamhg) rejects embeds without Supjav-like referer
+        val pageHeaders = Headers.Builder()
+            .set("User-Agent", appUserAgent())
+            .set("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
+            .set("Accept-Language", "en-US,en;q=0.9")
+            .set("Referer", "$baseUrl/")
+            .set("Origin", baseUrl)
+            .build()
+
+        val body = runCatching {
+            client.newCall(GET(clean, pageHeaders)).awaitSuccess().bodyString()
+        }.getOrDefault("")
+        if (body.isBlank()) return emptyList()
+        if (body.contains("restricted for this domain", ignoreCase = true) &&
+            !body.contains("eval(function")
+        ) {
+            // Retry with player page as referer
+            val retry = runCatching {
+                client.newCall(GET(clean, buildMediaHeaders(clean))).awaitSuccess().bodyString()
+            }.getOrDefault("")
+            if (retry.isNotBlank()) {
+                return extractFstFromHtml(retry, clean, prefix)
+            }
+        }
+
         val fromExtractor = runCatching {
-            StreamWishExtractor(client, mediaHeaders).videosFromUrl(url) { "$prefix - $it" }
+            StreamWishExtractor(client, pageHeaders).videosFromUrl(clean) { "$prefix - $it" }
         }.getOrDefault(emptyList())
         if (fromExtractor.isNotEmpty()) return fromExtractor
 
-        val body = client.newCall(GET(url, headers)).awaitSuccess().bodyString()
-        val doc = Jsoup.parse(body, url)
+        return extractFstFromHtml(body, clean, prefix)
+    }
 
-        val scriptBody = doc.select("script").asSequence()
-            .map { it.data().ifBlank { it.html() } }
-            .firstNotNullOfOrNull { script ->
-                when {
-                    script.contains("eval(function(p,a,c") ->
-                        JsUnpacker.unpackAndCombine(script)
+    private fun extractFstFromHtml(body: String, pageUrl: String, prefix: String): List<Video> {
+        if (body.contains("restricted for this domain", ignoreCase = true) &&
+            !body.contains("eval(function")
+        ) {
+            return emptyList()
+        }
 
-                    script.contains("m3u8") || script.contains("master.txt") || script.contains("file:") -> script
-
-                    else -> null
+        val unpacked = buildString {
+            append(body)
+            if (body.contains("eval(function")) {
+                PACKED_REGEX.findAll(body).forEach { m ->
+                    runCatching { JsUnpacker.unpackAndCombine(m.value) }.getOrNull()?.let {
+                        append('\n')
+                        append(it)
+                    }
                 }
             }
-            ?: run {
-                if (body.contains("eval(function(p,a,c")) {
-                    PACKED_REGEX.findAll(body).mapNotNull { m ->
-                        runCatching { JsUnpacker.unpackAndCombine(m.value) }.getOrNull()
-                    }.joinToString("\n").ifBlank { null }
-                } else {
-                    null
-                }
-            }
-            ?: return emptyList()
+        }
 
-        val masterUrls = PLAYLIST_REGEX.findAll(scriptBody).map { it.value }.toList()
-            .ifEmpty { M3U8_REGEX.findAll(scriptBody).map { it.value }.toList() }
-        if (masterUrls.isEmpty()) return emptyList()
+        // Prefer hls2/hls3/hls4 style sources from unpacked JWPlayer config
+        val candidates = linkedSetOf<String>()
+        M3U8_REGEX.findAll(unpacked).map { it.value }.forEach { candidates.add(it) }
+        Regex(
+            """https?://[^"'\s\\]+/(?:hls[0-9]?|stream)/[^"'\s\\]+""",
+            RegexOption.IGNORE_CASE,
+        ).findAll(unpacked).map { it.value }.forEach { candidates.add(it) }
+        Regex(
+            """["'](https?://[^"']+\.m3u8[^"']*)["']""",
+            RegexOption.IGNORE_CASE,
+        ).findAll(unpacked).map { it.groupValues[1] }.forEach { candidates.add(it) }
+        // Relative /stream/hls...
+        Regex("""["'](/(?:stream|hls)[^"']+\.m3u8[^"']*)["']""", RegexOption.IGNORE_CASE)
+            .findAll(unpacked)
+            .map { resolveRelative(it.groupValues[1], pageUrl) }
+            .forEach { candidates.add(it) }
+
+        val hlsHeaders = Headers.Builder()
+            .set("User-Agent", appUserAgent())
+            .set("Accept", "*/*")
+            .set("Referer", if (pageUrl.endsWith("/")) pageUrl else "$pageUrl/")
+            .set(
+                "Origin",
+                pageUrl.toHttpUrlOrNull()?.let { "${it.scheme}://${it.host}" } ?: baseUrl,
+            )
+            .build()
 
         val videos = mutableListOf<Video>()
-        for (masterUrl in masterUrls) {
-            val absMasterUrl = resolveRelative(masterUrl, url)
-            val hlsHeaders = buildMediaHeaders(url)
-
+        for (master in candidates) {
+            if (!master.contains("m3u8", ignoreCase = true) && !master.contains("/hls")) continue
+            val abs = resolveRelative(master, pageUrl)
             val extracted = runCatching {
                 playlistUtils.extractFromHls(
-                    playlistUrl = absMasterUrl,
-                    referer = url,
+                    abs,
+                    referer = pageUrl,
                     masterHeaders = hlsHeaders,
                     videoHeaders = hlsHeaders,
                     videoNameGen = { "$prefix - $it" },
@@ -1035,8 +1241,12 @@ class SupJav(override val lang: String = "en") :
             }.getOrDefault(emptyList())
             videos.addAll(extracted)
             if (videos.isNotEmpty()) break
+            // Direct link fallback
+            if (abs.contains(".m3u8")) {
+                videos.add(Video(abs, "$prefix - HLS", abs, headers = hlsHeaders))
+                break
+            }
         }
-
         return videos.distinctBy { it.videoUrl }
     }
 
@@ -1159,8 +1369,18 @@ class SupJav(override val lang: String = "en") :
         val quality = preferences.getString(PREF_QUALITY_KEY, PREF_QUALITY_DEFAULT)!!
 
         return sortedWith(
-            compareBy { it.quality.contains(quality) },
-        ).reversed()
+            compareBy<Video> { video ->
+                // Prefer working hosters first (ST / FST), demote TV (often ads)
+                val q = video.quality.uppercase()
+                when {
+                    q.startsWith("ST") -> 0
+                    q.startsWith("FST") -> 1
+                    q.startsWith("VOE") -> 2
+                    q.startsWith("TV") -> 9
+                    else -> 5
+                }
+            }.thenByDescending { it.quality.contains(quality) },
+        )
     }
 
     companion object {
