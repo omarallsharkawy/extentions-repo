@@ -1,0 +1,13 @@
+ext {
+    extName = 'ArabX'
+    extClass = '.ArabX'
+    extVersionCode = 1
+    isNsfw = true
+}
+
+apply plugin: "kei.plugins.extension.legacy"
+
+dependencies {
+    implementation(project(':lib:unpacker'))
+    implementation(project(':lib:playlistutils'))
+}

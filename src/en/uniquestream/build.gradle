@@ -1,0 +1,14 @@
+ext {
+    extName = 'UniqueStream'
+    extClass = '.UniqueStream'
+    baseUrl = 'https://uniquestream.net'
+    // Standalone now (was DooPlay-themed with versionCode = baseVersionCode(5) + 3 = 8).
+    // extVersionCode must exceed 8 so existing users receive this rewrite as an update.
+    extVersionCode = 9
+}
+
+apply plugin: "kei.plugins.extension.legacy"
+
+dependencies {
+    implementation(project(":lib:playlistutils"))
+}

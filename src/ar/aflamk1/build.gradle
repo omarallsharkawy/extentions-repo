@@ -1,0 +1,12 @@
+ext {
+    extName = 'Aflamk1'
+    extClass = '.Aflamk1'
+    extVersionCode = 1
+    isNsfw = true
+}
+
+apply plugin: "kei.plugins.extension.legacy"
+
+dependencies {
+    implementation(project(':lib:playlistutils'))
+}

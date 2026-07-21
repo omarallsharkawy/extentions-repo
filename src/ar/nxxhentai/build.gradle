@@ -1,0 +1,21 @@
+ext {
+    extName = 'NxxHentai'
+    extClass = '.NxxHentai'
+    themePkg = 'dooplay'
+    baseUrl = 'https://nxxhentai.net'
+    overrideVersionCode = 5
+    isNsfw = true
+}
+
+apply plugin: "kei.plugins.extension.legacy"
+
+dependencies {
+    implementation(project(':lib:playlistutils'))
+    implementation(project(':lib:doodextractor'))
+    implementation(project(':lib:mixdropextractor'))
+    implementation(project(':lib:streamwishextractor'))
+    implementation(project(':lib:streamtapeextractor'))
+    implementation(project(':lib:voeextractor'))
+    implementation(project(':lib:uqloadextractor'))
+    implementation(project(':lib:universalextractor'))
+}

@@ -1,0 +1,9 @@
+ext {
+    extName = 'Nyaa (Torrent)'
+    extClass = '.NyaaFactory'
+    extVersionCode = 5
+    isTorrent = true
+    isNsfw = true
+}
+
+apply plugin: "kei.plugins.extension.legacy"
