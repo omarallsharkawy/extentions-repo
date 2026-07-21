@@ -2,6 +2,7 @@ package eu.kanade.tachiyomi.animeextension.all.supjav
 
 import androidx.preference.ListPreference
 import androidx.preference.PreferenceScreen
+import aniyomi.lib.cloudflareinterceptor.CloudflareInterceptor
 import aniyomi.lib.doodextractor.DoodExtractor
 import aniyomi.lib.mixdropextractor.MixDropExtractor
 import aniyomi.lib.playlistutils.PlaylistUtils
@@ -44,6 +45,12 @@ class SupJav(override val lang: String = "en") :
     override val baseUrl = "https://supjav.com"
 
     override val supportsLatest = true
+
+    override val client by lazy {
+        network.client.newBuilder()
+            .addNetworkInterceptor(CloudflareInterceptor(network.client))
+            .build()
+    }
 
     override fun headersBuilder() = super.headersBuilder().apply {
         set("User-Agent", DEFAULT_USER_AGENT)

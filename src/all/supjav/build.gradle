@@ -1,7 +1,7 @@
 ext {
     extName = 'SupJav'
     extClass = '.SupJavFactory'
-    extVersionCode = 52
+    extVersionCode = 53
     isNsfw = true
 }
 
@@ -17,4 +17,5 @@ dependencies {
     implementation(project(":lib:vidhideextractor"))
     implementation(project(":lib:playlistutils"))
     implementation(project(":lib:unpacker"))
+    implementation(project(":lib:cloudflareinterceptor"))
 }
