@@ -115,8 +115,9 @@ class SupJav(override val lang: String = "en") :
         "ul.pagination li.active + li a, nav.pagination a.next, div.nav-links a.next, " +
         "a.next.page-numbers, a.next, a[rel=next], a[rel=\"next\"], " +
         ".pagination .current + a, .pagination .active + li a, " +
-        "div.pagination a.nextpostslink, div.pagination a:contains(Next), div.pagination a:contains(›), div.pagination a:contains(»), " +
-        "div.pagination a:contains(التالي), div.pagination a:contains(الأخيرة)"
+        "div.pagination a.nextpostslink, div.pagination a.next-page, " +
+        "div.pagination a:contains(Next), div.pagination a:contains(›), div.pagination a:contains(»), div.pagination a:contains(>), " +
+        "div.pagination a:contains(التالي)"
 
     private fun parseAnimePage(document: Document, selector: String): AnimesPage {
         val animeElements = document.select(selector)
@@ -372,9 +373,22 @@ class SupJav(override val lang: String = "en") :
         return listOf(episode)
     }
 
-    override fun episodeListSelector(): String = throw UnsupportedOperationException()
+    override fun episodeListParse(response: Response): List<SEpisode> {
+        val episode = SEpisode.create().apply {
+            name = "JAV"
+            episode_number = 1F
+            url = response.request.url.encodedPath
+        }
 
-    override fun episodeFromElement(element: Element): SEpisode = throw UnsupportedOperationException()
+        return listOf(episode)
+    }
+
+    override fun episodeListSelector(): String = "html"
+
+    override fun episodeFromElement(element: Element): SEpisode = SEpisode.create().apply {
+        name = "JAV"
+        episode_number = 1F
+    }
 
     // ============================ Video Links =============================
     override fun videoListParse(response: Response): List<Video> {
@@ -579,11 +593,11 @@ class SupJav(override val lang: String = "en") :
         host.contains("sptvp") ||
         host.contains("turbosplayer")
 
-    override fun videoListSelector(): String = throw UnsupportedOperationException()
+    override fun videoListSelector(): String = "html"
 
-    override fun videoFromElement(element: Element): Video = throw UnsupportedOperationException()
+    override fun videoFromElement(element: Element): Video = Video("", "", "")
 
-    override fun videoUrlParse(document: Document): String = throw UnsupportedOperationException()
+    override fun videoUrlParse(document: Document): String = ""
 
     // ============================== Settings ==============================
     override fun setupPreferenceScreen(screen: PreferenceScreen) {

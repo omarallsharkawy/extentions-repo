@@ -342,7 +342,18 @@ class MissAV :
         JavCoverFetcher.addPreferenceToScreen(screen)
     }
 
-    override fun episodeListParse(response: Response): List<SEpisode> = throw UnsupportedOperationException()
+    override fun animeDetailsRequest(anime: SAnime): Request = GET(baseUrl + anime.url, docHeaders)
+
+    override fun episodeListRequest(anime: SAnime): Request = GET(baseUrl + anime.url, docHeaders)
+
+    override fun episodeListParse(response: Response): List<SEpisode> = listOf(
+        SEpisode.create().apply {
+            name = "Episode"
+            setUrlWithoutDomain(response.request.url.toString())
+        },
+    )
+
+    override fun videoListRequest(episode: SEpisode): Request = GET(baseUrl + episode.url, docHeaders)
 
     private inline fun <reified T> List<*>.firstInstanceOrNull(): T? = filterIsInstance<T>().firstOrNull()
 
