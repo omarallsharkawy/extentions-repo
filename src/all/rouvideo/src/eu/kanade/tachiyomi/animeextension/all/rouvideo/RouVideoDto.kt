@@ -165,7 +165,7 @@ internal object RouVideoDto {
         fun toSAnime(): SAnime = SAnime.create().apply {
             url = id
             title = name
-            thumbnail_url = coverImageUrl
+            thumbnail_url = if (coverImageUrl.startsWith("//")) "https:$coverImageUrl" else coverImageUrl
             artist = majorCategory
             author = majorCategory
             description = desc

@@ -51,9 +51,27 @@ class HentaiTorrent :
         val anime = SAnime.create()
         anime.setUrlWithoutDomain(element.select("a.overlay").attr("href"))
         anime.title = element.select("a.overlay").text().trim()
-        anime.thumbnail_url = element.select("img").attr("src")
+        anime.thumbnail_url = element.getImageUrl()
 
         return anime
+    }
+
+    private fun Element.getImageUrl(): String? {
+        val img = if (tagName() == "img") this else selectFirst("img")
+        return img?.let {
+            it.attr("data-src").ifEmpty {
+                it.attr("data-original").ifEmpty {
+                    it.attr("poster").ifEmpty {
+                        it.attr("src")
+                    }
+                }
+            }
+        }?.takeIf { it.isNotBlank() }?.let { url ->
+            when {
+                url.startsWith("//") -> "https:$url"
+                else -> url
+            }
+        }
     }
 
     override fun popularAnimeNextPageSelector(): String = "div.pagination a:contains(Next)"
@@ -89,13 +107,15 @@ class HentaiTorrent :
     override fun searchAnimeRequest(page: Int, query: String, filters: AnimeFilterList): Request {
         val encodedQuery = query.replace(" ", "+")
         val cat = filters.firstNotNullOfOrNull { filter ->
-            if (filter is CategoriesList) getCategory()[filter.state].id else 0
-        }.toString()
+            if (filter is CategoriesList) getCategory()[filter.state].id else null
+        } ?: "0"
 
         return if (query.isNotEmpty()) {
             GET("$baseUrl/s.php?search=$encodedQuery&page=$page")
-        } else {
+        } else if (cat != "0" && cat.isNotEmpty()) {
             GET("$baseUrl/catalog/$cat/page/$page")
+        } else {
+            GET("$baseUrl/page/$page")
         }
     }
 

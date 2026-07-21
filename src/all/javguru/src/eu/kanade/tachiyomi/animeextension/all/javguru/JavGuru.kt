@@ -31,6 +31,7 @@ import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import okhttp3.Request
 import okhttp3.Response
+import org.jsoup.nodes.Element
 import org.jsoup.select.Elements
 import java.text.SimpleDateFormat
 import java.util.Locale
@@ -89,7 +90,7 @@ class JavGuru :
 
                     title = a.text()
                 }
-                thumbnail_url = element.select("img").attr("abs:src")
+                thumbnail_url = element.getImageUrl()
             }
         }
         return AnimesPage(entries, end < popularElements.size)
@@ -112,7 +113,7 @@ class JavGuru :
                     getIDFromUrl(a)?.let { url = it }
                         ?: setUrlWithoutDomain(a.attr("href"))
                 }
-                thumbnail_url = element.select("img").attr("abs:src")
+                thumbnail_url = element.getImageUrl()
                 title = element.select("h2 > a").text()
             }
         }
@@ -257,12 +258,30 @@ class JavGuru :
                     getIDFromUrl(a)?.let { url = it }
                         ?: setUrlWithoutDomain(a.attr("href"))
                 }
-                element.select("img").let {
-                    title = it.attr("alt").ifBlank {
-                        element.select("a.related-title").attr("title")
-                    }
-                    thumbnail_url = it.attr("abs:src")
+                title = element.select("img").attr("alt").ifBlank {
+                    element.select("a.related-title").attr("title")
                 }
+                thumbnail_url = element.getImageUrl()
+            }
+        }
+    }
+
+    private fun Element.getImageUrl(): String? {
+        val img = if (tagName() == "img") this else selectFirst("img")
+        return img?.let {
+            it.attr("abs:src").ifEmpty {
+                it.attr("data-src").ifEmpty {
+                    it.attr("data-original").ifEmpty {
+                        it.attr("poster").ifEmpty {
+                            it.attr("src")
+                        }
+                    }
+                }
+            }
+        }?.takeIf { it.isNotBlank() }?.let { url ->
+            when {
+                url.startsWith("//") -> "https:$url"
+                else -> url
             }
         }
     }

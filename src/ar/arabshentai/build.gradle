@@ -1,7 +1,8 @@
 ext {
     extName = 'ArabsHentai'
     extClass = '.ArabsHentai'
-    extVersionCode = 14
+    extVersionCode = 22
+    overrideVersionCode = 22
     baseUrl = 'https://arabshentai.com'
     isNsfw = true
 }

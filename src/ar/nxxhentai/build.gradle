@@ -1,7 +1,8 @@
 ext {
     extName = 'NxxHentai'
     extClass = '.NxxHentai'
-    extVersionCode = 13
+    extVersionCode = 21
+    overrideVersionCode = 21
     baseUrl = 'https://nxxhentai.net'
     isNsfw = true
 }

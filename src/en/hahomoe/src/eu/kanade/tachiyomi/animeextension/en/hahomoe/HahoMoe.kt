@@ -50,7 +50,25 @@ class HahoMoe :
     override fun popularAnimeFromElement(element: Element) = SAnime.create().apply {
         setUrlWithoutDomain(element.attr("href") + "?s=srt-d")
         title = element.selectFirst("div.label > span, div span.thumb-title")!!.text()
-        thumbnail_url = element.selectFirst("img")?.absUrl("src")
+        thumbnail_url = element.getImageUrl()
+    }
+
+    private fun Element.getImageUrl(): String? {
+        val img = if (tagName() == "img") this else selectFirst("img")
+        return img?.let {
+            it.absUrl("data-src").ifEmpty {
+                it.absUrl("data-original").ifEmpty {
+                    it.absUrl("poster").ifEmpty {
+                        it.absUrl("src")
+                    }
+                }
+            }
+        }?.takeIf { it.isNotBlank() }?.let { url ->
+            when {
+                url.startsWith("//") -> "https:$url"
+                else -> url
+            }
+        }
     }
 
     override fun popularAnimeNextPageSelector() = "ul.pagination li.page-item a[rel=next]"
@@ -92,7 +110,7 @@ class HahoMoe :
     // =========================== Anime Details ============================
     override fun animeDetailsParse(document: Document) = SAnime.create().apply {
         setUrlWithoutDomain(document.location())
-        thumbnail_url = document.selectFirst("img.cover-image.img-thumbnail")?.absUrl("src")
+        thumbnail_url = document.selectFirst("img.cover-image.img-thumbnail")?.getImageUrl()
         title = document.selectFirst("li.breadcrumb-item.active")!!.text()
         genre = document.select("li.genre span.value, div.genre-tree ul > li > a").joinToString { it.text() }
         description = document.selectFirst("div.card-body")?.text()

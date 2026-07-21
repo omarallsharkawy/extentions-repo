@@ -264,7 +264,7 @@ class Hanime :
     private fun parseHitsToAnimeList(hits: List<HitsModel>): List<SAnime> = hits.groupBy { getTitle(it.name) }.map { (_, items) -> items.first() }.map { item ->
         SAnime.create().apply {
             title = getTitle(item.name)
-            thumbnail_url = item.coverUrl
+            thumbnail_url = (item.coverUrl ?: item.posterUrl)?.let { if (it.startsWith("//")) "https:$it" else it }
             author = item.brand
             description = item.description?.replace(HTML_TAG_REGEX, "")
             status = SAnime.UNKNOWN
@@ -431,7 +431,7 @@ class Hanime :
             if (hit != null) {
                 return anime.apply {
                     title = getTitle(hit.name)
-                    thumbnail_url = hit.coverUrl ?: hit.posterUrl
+                    thumbnail_url = (hit.coverUrl ?: hit.posterUrl)?.let { if (it.startsWith("//")) "https:$it" else it }
                     author = hit.brand
                     description = hit.description?.replace(HTML_TAG_REGEX, "")?.trim()
                     status = SAnime.UNKNOWN

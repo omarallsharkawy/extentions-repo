@@ -51,12 +51,16 @@ class PTorrent :
         val anime = SAnime.create()
         anime.setUrlWithoutDomain(element.select("a.overlay").attr("href"))
         anime.title = element.select("a.overlay").text().trim()
-        anime.thumbnail_url = element.select("img").attr("src")
+        val img = element.selectFirst("img")
+        anime.thumbnail_url = img?.attr("data-src")?.ifBlank { null }
+            ?: img?.attr("data-original")?.ifBlank { null }
+            ?: img?.attr("data-lazy-src")?.ifBlank { null }
+            ?: img?.attr("src")
 
         return anime
     }
 
-    override fun popularAnimeNextPageSelector(): String = "div.pagination a:contains(Next), div.pagination a:contains(next), div.pagination a.next"
+    override fun popularAnimeNextPageSelector(): String = "div.pagination a:contains(Next), div.pagination a:contains(next), div.pagination a.next, div.pagination a[rel=next], a[rel=next]"
 
     // =============================== Latest ===============================
     override fun latestUpdatesRequest(page: Int): Request = throw UnsupportedOperationException()
@@ -167,13 +171,17 @@ class PTorrent :
     }
 
     private fun fetchTrackers(): String {
-        val request = Request.Builder()
-            .url("https://raw.githubusercontent.com/ngosang/trackerslist/refs/heads/master/trackers_all_http.txt")
-            .build()
+        return try {
+            val request = Request.Builder()
+                .url("https://raw.githubusercontent.com/ngosang/trackerslist/refs/heads/master/trackers_all_http.txt")
+                .build()
 
-        client.newCall(request).execute().use { response ->
-            if (!response.isSuccessful) throw Exception("Unexpected code $response")
-            return response.body.string().trim()
+            client.newCall(request).execute().use { response ->
+                if (!response.isSuccessful) return DEFAULT_TRACKERS
+                response.body.string().trim().ifBlank { DEFAULT_TRACKERS }
+            }
+        } catch (_: Exception) {
+            DEFAULT_TRACKERS
         }
     }
 
@@ -237,5 +245,6 @@ class PTorrent :
     companion object {
         private const val IS_FILENAME_KEY = "filename"
         private const val IS_FILENAME_DEFAULT = false
+        private const val DEFAULT_TRACKERS = "http://tracker.opentrackr.org:1337/announce\nhttp://open.acgnxtracker.com:80/announce"
     }
 }

@@ -60,10 +60,7 @@ class SexMahali :
         title = link.attr("title").ifBlank {
             element.selectFirst("header.entry-header span, header.entry-header")?.text().orEmpty()
         }.ifBlank { link.text() }.trim()
-        thumbnail_url = element.selectFirst("img")?.let { img ->
-            img.attr("abs:data-src").ifBlank { img.attr("abs:src") }
-                .takeIf { it.isNotBlank() && !it.startsWith("data:") }
-        }
+        thumbnail_url = element.selectFirst("img")?.getImageUrl()
     }
 
     override fun popularAnimeNextPageSelector(): String? = null
@@ -91,8 +88,10 @@ class SexMahali :
 
         return when {
             query.isNotBlank() -> GET(searchUrl(page, query.trim()), headers)
+
             category.isNotBlank() || sort.isNotBlank() ->
                 GET(browseUrl(page, sort, category), headers)
+
             else -> popularAnimeRequest(page)
         }
     }
@@ -158,8 +157,10 @@ class SexMahali :
             ?: document.selectFirst("h1, .entry-title, .video-player meta[itemprop=name]")?.attr("content")
             ?: document.selectFirst("h1, .entry-title")?.text().orEmpty()
 
-        thumbnail_url = document.selectFirst("meta[property=og:image]")?.attr("content")
-            ?: document.selectFirst("meta[itemprop=thumbnailUrl]")?.attr("content")
+        thumbnail_url = fixUrl(
+            document.selectFirst("meta[property=og:image]")?.attr("content")
+                ?: document.selectFirst("meta[itemprop=thumbnailUrl]")?.attr("content"),
+        )
 
         description = buildString {
             document.selectFirst(".video-description, #video-about .desc, .entry-content .desc")
@@ -322,13 +323,21 @@ class SexMahali :
 
     private fun hostLabel(host: String): String = when {
         host.contains("voe") -> "Voe"
+
         host.contains("streamtape") || host.contains("stape") -> "StreamTape"
+
         host.contains("turbovid") || host.contains("turboviplay") -> "TurboVid"
+
         host.contains("hgcloud") -> "HGCloud"
+
         host.contains("abyss") -> "Abyss"
+
         host.contains("seekplays") -> "SeekPlays"
+
         host.contains("playmogo") -> "PlayMogo"
+
         host.isBlank() -> "Server"
+
         else -> host.substringBefore('.').replaceFirstChar {
             if (it.isLowerCase()) it.titlecase(Locale.ROOT) else it.toString()
         }
@@ -439,6 +448,36 @@ class SexMahali :
     }
 
     private inline fun <reified T> AnimeFilterList.firstInstanceOrNull(): T? = firstOrNull { it is T } as? T
+
+    private fun Element.getImageUrl(): String? {
+        val src = when {
+            hasAttr("data-original") -> attr("data-original")
+            hasAttr("data-src") -> attr("data-src")
+            hasAttr("data-lazy-src") -> attr("data-lazy-src")
+            hasAttr("srcset") -> attr("srcset").substringBefore(" ").substringBefore(",")
+            hasAttr("poster") -> attr("poster")
+            else -> attr("src")
+        }.ifBlank { attr("src") }.trim()
+
+        if (src.isBlank() || src.startsWith("data:")) return null
+        val resolved = if (src.startsWith("//")) {
+            "https:$src"
+        } else if (src.startsWith("http://") || src.startsWith("https://")) {
+            src
+        } else {
+            absUrl("data-original").ifBlank { absUrl("data-src").ifBlank { absUrl("src") } }
+        }
+        return resolved.takeIf { it.isNotBlank() && !it.startsWith("data:") }
+    }
+
+    private fun fixUrl(url: String?): String? {
+        if (url.isNullOrBlank()) return null
+        val trimmed = url.trim()
+        return when {
+            trimmed.startsWith("//") -> "https:$trimmed"
+            else -> trimmed
+        }.takeIf { it.isNotBlank() && !it.startsWith("data:") }
+    }
 
     companion object {
         private const val SORT_POPULAR = "popular"

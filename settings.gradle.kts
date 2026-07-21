@@ -30,42 +30,29 @@ enableFeaturePreview("TYPESAFE_PROJECT_ACCESSORS")
 
 rootProject.name = "Yuzono-Anime"
 
-/**
- * Add or remove modules to load as needed for local development here.
- */
-loadAllIndividualExtensions()
-// loadIndividualExtension("all", "jellyfin")
+val targetModules = listOf(
+    "ar:aflamk1", "ar:anime4up", "ar:animerco", "ar:arabseed", "ar:arabshentai",
+    "ar:arabx", "ar:arabxn", "ar:cimaleek", "ar:cimalight", "ar:egydead",
+    "ar:faselhd", "ar:nxxhentai", "ar:okanime", "ar:sexalarab", "ar:sexmahali",
+    "en:anikage", "en:animeparadise", "en:animetake", "en:hahomoe", "en:hanime", "en:hentaimama", "en:hexawatch",
+    "en:hstream", "en:kayoanime", "en:kimoitv", "en:mapple", "en:myanime", "en:onetwothreeanime",
+    "en:pinoymoviepedia", "en:rule34video", "en:uniquestream",
+    "all:hentaitorrent", "all:jable", "all:javgg", "all:javguru", "all:missav", "all:nyaatorrent", "all:pornhub", "all:ptorrent",
+    "all:rouvideo", "all:streamingcommunity", "all:supjav", "all:xnxx", "all:xvideos"
+)
 
-/**
- * ===================================== COMMON CONFIGURATION ======================================
- */
 include(":core")
 
-// Load all modules under /lib
-File(rootDir, "lib").eachDir { include("lib:${it.name}") }
-
-// Load all modules under /lib-multisrc
-File(rootDir, "lib-multisrc").eachDir { include("lib-multisrc:${it.name}") }
-
-/**
- * ======================================== HELPER FUNCTION ========================================
- */
-fun loadAllIndividualExtensions() {
-    File(rootDir, "src").eachDir { dir ->
-        dir.eachDir { subdir ->
-            loadIndividualExtension(dir.name, subdir.name)
-        }
-    }
-}
-fun loadIndividualExtension(lang: String, name: String) {
-    include("src:$lang:$name")
+for (mod in targetModules) {
+    include(":src:$mod")
 }
 
-fun File.eachDir(block: (File) -> Unit) {
-    val files = listFiles() ?: return
-    for (file in files) {
-        if (file.isDirectory && file.name != ".gradle" && file.name != "build") {
-            block(file)
-        }
-    }
-}
+// Load all modules under /lib that contain a build file
+File(rootDir, "lib").listFiles()?.filter { 
+    it.isDirectory && (File(it, "build.gradle").exists() || File(it, "build.gradle.kts").exists()) 
+}?.forEach { include("lib:${it.name}") }
+
+// Load all modules under /lib-multisrc that contain a build file
+File(rootDir, "lib-multisrc").listFiles()?.filter { 
+    it.isDirectory && (File(it, "build.gradle").exists() || File(it, "build.gradle.kts").exists()) 
+}?.forEach { include("lib-multisrc:${it.name}") }

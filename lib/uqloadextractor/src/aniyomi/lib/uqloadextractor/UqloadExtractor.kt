@@ -3,7 +3,7 @@ package aniyomi.lib.uqloadextractor
 import eu.kanade.tachiyomi.animesource.model.Video
 import eu.kanade.tachiyomi.network.GET
 import eu.kanade.tachiyomi.network.awaitSuccess
-import keiyoushi.utils.useAsJsoup
+import eu.kanade.tachiyomi.util.asJsoup
 import okhttp3.Headers
 import okhttp3.OkHttpClient
 
@@ -17,7 +17,7 @@ class UqloadExtractor(private val client: OkHttpClient) {
 
     suspend fun videosFromUrl(url: String, prefix: String = ""): List<Video> {
         val fixedUrl = if (url.startsWith(BASE_URL, true)) url else url.replace(hostRegex, BASE_URL)
-        val doc = client.newCall(GET(fixedUrl)).awaitSuccess().useAsJsoup()
+        val doc = client.newCall(GET(fixedUrl)).awaitSuccess().asJsoup()
         val script = doc.selectFirst("script:containsData(sources:)")?.data()
             ?: return emptyList()
 

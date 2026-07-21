@@ -62,13 +62,7 @@ class SexAlArab :
         title = element.attr("title").ifBlank {
             element.selectFirst("strong.title")?.text().orEmpty()
         }.trim()
-        thumbnail_url = element.selectFirst("img.thumb, img")?.let { img ->
-            img.attr("abs:data-original").ifBlank { null }
-                ?: img.attr("abs:data-src").ifBlank { null }
-                ?: img.attr("abs:src").takeUnless {
-                    it.contains("data:image") || it.endsWith(".gif")
-                }
-        }
+        thumbnail_url = element.selectFirst("img.thumb, img")?.getImageUrl()
     }
 
     override fun popularAnimeNextPageSelector(): String = "div.pagination li.page a, div.pagination li.next a"
@@ -188,7 +182,7 @@ class SexAlArab :
             ?.let { el ->
                 el.attr("content").ifBlank { el.text() }
             }
-        thumbnail_url = document.selectFirst("meta[property=og:image]")?.attr("content")
+        thumbnail_url = fixUrl(document.selectFirst("meta[property=og:image]")?.attr("content"))
         status = SAnime.COMPLETED
     }
 
@@ -410,6 +404,36 @@ class SexAlArab :
             }
         }
         return m.toString()
+    }
+
+    private fun Element.getImageUrl(): String? {
+        val src = when {
+            hasAttr("data-original") -> attr("data-original")
+            hasAttr("data-src") -> attr("data-src")
+            hasAttr("data-lazy-src") -> attr("data-lazy-src")
+            hasAttr("srcset") -> attr("srcset").substringBefore(" ").substringBefore(",")
+            hasAttr("poster") -> attr("poster")
+            else -> attr("src")
+        }.ifBlank { attr("src") }.trim()
+
+        if (src.isBlank() || src.startsWith("data:") || src.endsWith(".gif")) return null
+        val resolved = if (src.startsWith("//")) {
+            "https:$src"
+        } else if (src.startsWith("http://") || src.startsWith("https://")) {
+            src
+        } else {
+            absUrl("data-original").ifBlank { absUrl("data-src").ifBlank { absUrl("src") } }
+        }
+        return resolved.takeIf { it.isNotBlank() && !it.startsWith("data:") }
+    }
+
+    private fun fixUrl(url: String?): String? {
+        if (url.isNullOrBlank()) return null
+        val trimmed = url.trim()
+        return when {
+            trimmed.startsWith("//") -> "https:$trimmed"
+            else -> trimmed
+        }.takeIf { it.isNotBlank() && !it.startsWith("data:") }
     }
 
     companion object {

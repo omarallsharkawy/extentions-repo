@@ -72,16 +72,23 @@ class Jable(override val lang: String) : AnimeHttpSource() {
                 },
             )
         }
-        return AnimesPage(
-            doc.select(".container .video-img-box").map {
-                SAnime.create().apply {
-                    setUrlWithoutDomain(it.select(".img-box a").attr("href"))
-                    thumbnail_url = it.select(".img-box img").attr("data-src")
-                    title = it.select(".detail .title").text()
-                }
-            },
-            true,
-        )
+        val items = doc.select(".container .video-img-box").map {
+            SAnime.create().apply {
+                setUrlWithoutDomain(it.select(".img-box a").attr("href"))
+                thumbnail_url = it.select(".img-box img").let { img ->
+                    img.attr("data-src").ifEmpty {
+                        img.attr("data-original").ifEmpty {
+                            img.attr("poster").ifEmpty {
+                                img.attr("src")
+                            }
+                        }
+                    }
+                }.let { url -> if (url.startsWith("//")) "https:$url" else url }
+                title = it.select(".detail .title").text()
+            }
+        }
+        val hasNextPage = items.isNotEmpty() && doc.select(".pagination li.active + li:not(.disabled)").isNotEmpty()
+        return AnimesPage(items, hasNextPage)
     }
 
     override fun latestUpdatesRequest(page: Int) = searchRequest("latest-updates", page, latestFilter)

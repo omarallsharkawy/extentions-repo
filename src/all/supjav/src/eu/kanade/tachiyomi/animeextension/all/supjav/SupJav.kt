@@ -69,7 +69,10 @@ class SupJav(override val lang: String = "en") :
 
         element.selectFirst("img")?.run {
             title = attr("alt")
-            thumbnail_url = absUrl("data-original").ifBlank { absUrl("src") }
+            val raw = attr("data-original").ifBlank { attr("data-src") }
+                .ifBlank { attr("data-lazy-src") }
+                .ifBlank { attr("src") }
+            thumbnail_url = if (raw.startsWith("http")) raw else absUrl(raw).ifBlank { raw }
         }
     }
 
@@ -244,7 +247,11 @@ class SupJav(override val lang: String = "en") :
     override fun animeDetailsParse(document: Document) = SAnime.create().apply {
         val content = document.selectFirst("div.content > div.post-meta")!!
         title = content.selectFirst("h2")!!.text()
-        thumbnail_url = content.selectFirst("img")?.absUrl("src")
+        thumbnail_url = content.selectFirst("img")?.run {
+            val raw = attr("data-original").ifBlank { attr("data-src") }
+                .ifBlank { attr("src") }
+            if (raw.startsWith("http")) raw else absUrl(raw).ifBlank { raw }
+        }
 
         content.selectFirst("div.cats")?.run {
             author = select("p:contains(Maker :) > a").textsOrNull()

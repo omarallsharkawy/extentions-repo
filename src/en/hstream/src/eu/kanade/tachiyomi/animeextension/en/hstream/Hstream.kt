@@ -129,10 +129,28 @@ class Hstream :
         title = floatleft.selectFirst("div > h1")!!.text()
         artist = floatleft.select("div > a:nth-of-type(3)").text()
 
-        thumbnail_url = document.selectFirst("div.float-left > img.object-cover")?.absUrl("src")
+        thumbnail_url = document.selectFirst("div.float-left > img.object-cover")?.getImageUrl()
         genre = document.select("ul.list-none > li > a").eachText().joinToString()
 
         description = document.selectFirst("div.relative > p.leading-tight")?.text()
+    }
+
+    private fun Element.getImageUrl(): String? {
+        val img = if (tagName() == "img") this else selectFirst("img")
+        return img?.let {
+            it.absUrl("data-src").ifEmpty {
+                it.absUrl("data-original").ifEmpty {
+                    it.absUrl("poster").ifEmpty {
+                        it.absUrl("src")
+                    }
+                }
+            }
+        }?.takeIf { it.isNotBlank() }?.let { url ->
+            when {
+                url.startsWith("//") -> "https:$url"
+                else -> url
+            }
+        }
     }
 
     // ============================== Episodes ==============================

@@ -92,7 +92,6 @@ class Javgg :
     override fun popularAnimeParse(response: Response): AnimesPage {
         val document = response.asJsoup()
         val elements = document.select("article[id*=post-]")
-        val nextPage = document.select("#nextpagination").any()
         val animeList = elements.map { element ->
             SAnime.create().apply {
                 setUrlWithoutDomain(element.selectFirst("a")!!.attr("abs:href"))
@@ -100,6 +99,7 @@ class Javgg :
                 thumbnail_url = element.selectFirst(".poster")?.getImageUrl()
             }
         }
+        val nextPage = document.select("#nextpagination").any() && animeList.isNotEmpty()
         return AnimesPage(animeList, nextPage)
     }
 
@@ -115,7 +115,6 @@ class Javgg :
     override fun searchAnimeParse(response: Response): AnimesPage {
         val document = response.asJsoup()
         val elements = document.select(".result-item article")
-        val nextPage = document.select("#nextpagination").any()
         val animeList = elements.map { element ->
             SAnime.create().apply {
                 setUrlWithoutDomain(element.selectFirst("a")!!.attr("abs:href"))
@@ -123,6 +122,7 @@ class Javgg :
                 thumbnail_url = element.selectFirst(".image")?.getImageUrl()
             }
         }
+        val nextPage = document.select("#nextpagination").any() && animeList.isNotEmpty()
         return AnimesPage(animeList, nextPage)
     }
 
@@ -205,22 +205,28 @@ class Javgg :
     }
 
     private fun org.jsoup.nodes.Element.getImageUrl(): String? {
-        val imageLinkRegex = """https?://\S+\.(jpg|png)""".toRegex()
-
-        for (link in this.select("[href], [src]")) {
-            val href = link.attr("href")
-            val src = link.attr("src")
-            if (imageLinkRegex.matches(href)) {
-                return href
+        val img = if (tagName() == "img") this else selectFirst("img")
+        val url = img?.let {
+            it.attr("data-src").ifEmpty {
+                it.attr("data-original").ifEmpty {
+                    it.attr("poster").ifEmpty {
+                        it.attr("src")
+                    }
+                }
             }
-            if (imageLinkRegex.matches(src)) {
-                return src
+        }?.takeIf { it.isNotBlank() } ?: run {
+            val imageLinkRegex = """(https?:)?//\S+\.(jpg|jpeg|png|webp)""".toRegex()
+            for (link in select("[href], [src]")) {
+                val href = link.attr("href")
+                val src = link.attr("src")
+                if (imageLinkRegex.matches(href)) return@run href
+                if (imageLinkRegex.matches(src)) return@run src
             }
+            val textMatches = imageLinkRegex.find(text())
+            val htmlMatches = imageLinkRegex.find(outerHtml())
+            textMatches?.value ?: htmlMatches?.value
         }
-
-        val textMatches = imageLinkRegex.find(this.text())
-        val htmlMatches = imageLinkRegex.find(this.outerHtml())
-        return textMatches?.value ?: htmlMatches?.value
+        return url?.let { if (it.startsWith("//")) "https:$it" else it }
     }
 
     override fun List<Video>.sort(): List<Video> {

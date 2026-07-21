@@ -13,6 +13,7 @@ import eu.kanade.tachiyomi.network.GET
 import eu.kanade.tachiyomi.network.POST
 import eu.kanade.tachiyomi.util.asJsoup
 import keiyoushi.utils.getPreferencesLazy
+import keiyoushi.utils.parallelMapNotNullBlocking
 import okhttp3.FormBody
 import okhttp3.Headers
 import okhttp3.Request
@@ -49,8 +50,26 @@ class HentaiMama :
         val anime = SAnime.create()
         anime.setUrlWithoutDomain(element.select("a").attr("href"))
         anime.title = element.select("div.data h3 a").text()
-        anime.thumbnail_url = element.select("div.poster img").attr("data-src")
+        anime.thumbnail_url = element.getImageUrl()
         return anime
+    }
+
+    private fun Element.getImageUrl(): String? {
+        val img = if (tagName() == "img") this else selectFirst("img")
+        return img?.let {
+            it.attr("data-src").ifEmpty {
+                it.attr("data-original").ifEmpty {
+                    it.attr("poster").ifEmpty {
+                        it.attr("src")
+                    }
+                }
+            }
+        }?.takeIf { it.isNotBlank() }?.let { url ->
+            when {
+                url.startsWith("//") -> "https:$url"
+                else -> url
+            }
+        }
     }
 
     override fun popularAnimeNextPageSelector(): String = "div.pagination-wraper div.resppages a"
@@ -104,11 +123,10 @@ class HentaiMama :
 
         val videoRegex = Regex("(https:[^\"]+\\.mp4*)")
 
-        val videoList = mutableListOf<Video>()
-
-        for (url in urls) {
-            val req = client.newCall(GET(url)).execute().asJsoup()
-                .body().toString()
+        return urls.parallelMapNotNullBlocking { url ->
+            val req = runCatching {
+                client.newCall(GET(url, newHeaders)).execute().asJsoup().body().toString()
+            }.getOrNull() ?: return@parallelMapNotNullBlocking null
 
             val videoLink = videoRegex.find(req)
             val videoRes = when {
@@ -116,15 +134,15 @@ class HentaiMama :
                 url.contains("new1") -> "Mirror 1"
                 url.contains("new2") -> "Mirror 2"
                 url.contains("new3") -> "Mirror 3"
-                else -> ""
+                else -> "Default"
             }
 
             if (videoLink != null) {
-                videoList.add(Video(videoLink.value, videoRes, videoLink.value))
+                Video(videoLink.value, videoRes, videoLink.value)
+            } else {
+                null
             }
         }
-
-        return videoList
     }
 
     override fun videoListSelector() = throw UnsupportedOperationException()
@@ -160,12 +178,12 @@ class HentaiMama :
             // filter search
             anime.setUrlWithoutDomain(element.select("a").attr("href"))
             anime.title = element.select("div.data h3 a").text()
-            anime.thumbnail_url = element.select("div.poster img").attr("data-src")
+            anime.thumbnail_url = element.getImageUrl()
             return anime
         } else {
             // normal search
             anime.setUrlWithoutDomain(element.select("div.details > div.title a").attr("href"))
-            anime.thumbnail_url = element.select("div.image div a img").attr("src")
+            anime.thumbnail_url = element.getImageUrl()
             anime.title = element.select("div.details > div.title a").text()
             return anime
         }
@@ -194,7 +212,7 @@ class HentaiMama :
 
     override fun animeDetailsParse(document: Document): SAnime {
         val anime = SAnime.create()
-        anime.thumbnail_url = document.selectFirst("div.sheader div.poster img")!!.attr("data-src")
+        anime.thumbnail_url = document.selectFirst("div.sheader div.poster img")?.getImageUrl()
         anime.title = document.select("#info1 div:nth-child(2) span").text()
         anime.genre = document.select("div.sheader  div.data  div.sgeneros a")
             .joinToString(", ") { it.text() }
@@ -220,7 +238,7 @@ class HentaiMama :
         val anime = SAnime.create()
         anime.setUrlWithoutDomain(element.select("a").attr("href"))
         anime.title = element.select("div.data h3 a").text()
-        anime.thumbnail_url = element.select("div.poster img").attr("data-src")
+        anime.thumbnail_url = element.getImageUrl()
         return anime
     }
 

@@ -74,14 +74,19 @@ class Xnxx :
             ?: element.selectFirst("a.title, div.thumb-under a, p a[href*=/video]")?.text().orEmpty()
                 .replace(Regex("""\s+\d+\s*min\s*$"""), "")
                 .trim()
-        anime.thumbnail_url = element.selectFirst("div.thumb img, img")?.attr("data-src")
-            ?.ifBlank { null }
-            ?: element.selectFirst("img")?.attr("src")
+        val img = element.selectFirst("div.thumb img, img")
+        val rawThumb = img?.attr("data-src")?.ifBlank { null }
+            ?: img?.attr("data-original")?.ifBlank { null }
+            ?: img?.attr("data-lazy-src")?.ifBlank { null }
+            ?: img?.attr("poster")?.ifBlank { null }
+            ?: img?.attr("src")
+        anime.thumbnail_url = rawThumb?.let { absUrl(it) }
         return anime
     }
 
     override fun popularAnimeNextPageSelector(): String = "div.pagination a.next, a.dir.next, a.next-page, " +
-        "div.pagination a.no-page.next, div.pagination .current + a, div.pagination li.current + li a"
+        "div.pagination a.no-page.next, div.pagination .current + a, div.pagination li.current + li a, " +
+        "a.pagination-next, a.page-next, .pagination a[rel=next], a[rel=next]"
 
     override fun popularAnimeParse(response: Response): AnimesPage {
         val document = response.asJsoup()
@@ -218,6 +223,11 @@ class Xnxx :
             .joinToString()
             .ifBlank { null }
         anime.thumbnail_url = document.selectFirst("meta[property=og:image]")?.attr("content")
+            ?.ifBlank { null }
+            ?: document.selectFirst("#html5player img, #video-content-metadata img, div.thumb img, img")?.run {
+                val raw = attr("data-src").ifBlank { attr("data-original") }.ifBlank { attr("src") }
+                absUrl(raw)
+            }
         anime.status = SAnime.COMPLETED
         return anime
     }

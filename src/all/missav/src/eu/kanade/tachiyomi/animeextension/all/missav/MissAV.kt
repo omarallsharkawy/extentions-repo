@@ -146,11 +146,14 @@ class MissAV :
                 setUrlWithoutDomain(href)
                 title = titleText
                 thumbnail_url = element.selectFirst("img[data-src]")?.attr("abs:data-src")
+                    ?: element.selectFirst("img[data-original]")?.attr("abs:data-original")
+                    ?: element.selectFirst("img[data-lazy-src]")?.attr("abs:data-lazy-src")
+                    ?: element.selectFirst("img[poster]")?.attr("abs:poster")
                     ?: element.selectFirst("img")?.attr("abs:src")
             }
         }
 
-        val hasNextPage = document.selectFirst("a[rel=next], a[aria-label*=Next], a.next") != null
+        val hasNextPage = document.selectFirst("a[rel=next], a[aria-label*=Next], a.next, div.pagination a.next, div.pagination span.current + a") != null
         return AnimesPage(entries, hasNextPage)
     }
 
@@ -200,6 +203,9 @@ class MissAV :
             ?: document.select("div[class*=text-secondary] span:contains(title) + span").text()
         val siteCover = document.selectFirst("video[class*=player]")?.attr("abs:data-poster")
             ?: document.selectFirst("video[data-poster]")?.attr("abs:data-poster")
+            ?: document.selectFirst("meta[property=og:image]")?.attr("content")
+            ?: document.selectFirst("img[data-src]")?.attr("abs:data-src")
+            ?: document.selectFirst("img")?.attr("abs:src")
 
         return SAnime.create().apply {
             title = document.selectFirst("h1[class*=text-base]")?.text()

@@ -15,6 +15,7 @@ import eu.kanade.tachiyomi.util.asJsoup
 import keiyoushi.lib.jsunpacker.JsUnpacker
 import keiyoushi.utils.addListPreference
 import keiyoushi.utils.getPreferencesLazy
+import keiyoushi.utils.parallelCatchingFlatMapBlocking
 import okhttp3.Headers
 import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.Request
@@ -59,11 +60,7 @@ class ArabX :
         setUrlWithoutDomain(link?.attr("abs:href").orEmpty())
         title = link?.attr("title")?.ifBlank { null }
             ?: element.selectFirst("strong.title")?.text().orEmpty()
-        thumbnail_url = element.selectFirst("img.thumb, img")?.let { img ->
-            img.attr("abs:data-original").ifBlank { null }
-                ?: img.attr("abs:data-src").ifBlank { null }
-                ?: img.attr("abs:src").takeUnless { it.startsWith("data:") }
-        }
+        thumbnail_url = element.selectFirst("img.thumb, img")?.getImageUrl()
     }
 
     override fun popularAnimeNextPageSelector(): String = "div.pagination li.next a, div.pagination li.page a"
@@ -196,7 +193,7 @@ class ArabX :
             .distinct()
             .joinToString()
             .ifBlank { null }
-        thumbnail_url = document.selectFirst("meta[property=og:image]")?.attr("content")
+        thumbnail_url = fixUrl(document.selectFirst("meta[property=og:image]")?.attr("content"))
         status = SAnime.COMPLETED
     }
 
@@ -227,8 +224,8 @@ class ArabX :
             .filter { it.isNotBlank() }
             .distinct()
 
-        for (iframe in iframeSrcs) {
-            videos += videosFromHoster(iframe, pageUrl)
+        videos += iframeSrcs.parallelCatchingFlatMapBlocking { iframe ->
+            videosFromHoster(iframe, pageUrl)
         }
 
         // Fallbacks on the watch page itself
@@ -245,7 +242,11 @@ class ArabX :
             .set("Referer", pageUrl)
             .set("Origin", baseUrl)
             .build()
-        val html = client.newCall(GET(embedUrl, embedHeaders)).execute().use { it.body.string() }
+        val html = runCatching {
+            client.newCall(GET(embedUrl, embedHeaders)).execute().use { it.body.string() }
+        }.getOrNull().orEmpty()
+
+        if (html.isBlank()) return emptyList()
 
         // Dean Edwards packed JWPlayer config (playeriz/playiri)
         val unpacked = JsUnpacker.unpackAndCombine(html).orEmpty().ifBlank {
@@ -262,7 +263,7 @@ class ArabX :
 
         // Nested iframe redirect
         val nested = IFRAME_SRC_REGEX.findAll(html).map { it.groupValues[1] }.toList()
-        return nested.flatMap { videosFromHoster(it, embedUrl) }
+        return nested.parallelCatchingFlatMapBlocking { videosFromHoster(it, embedUrl) }
     }
 
     private fun extractDirectStreams(html: String, referer: String, labelPrefix: String): List<Video> {
@@ -412,6 +413,36 @@ class ArabX :
     }
 
     private inline fun <reified T> AnimeFilterList.firstInstanceOrNull(): T? = firstOrNull { it is T } as? T
+
+    private fun Element.getImageUrl(): String? {
+        val src = when {
+            hasAttr("data-original") -> attr("data-original")
+            hasAttr("data-src") -> attr("data-src")
+            hasAttr("data-lazy-src") -> attr("data-lazy-src")
+            hasAttr("srcset") -> attr("srcset").substringBefore(" ").substringBefore(",")
+            hasAttr("poster") -> attr("poster")
+            else -> attr("src")
+        }.ifBlank { attr("src") }.trim()
+
+        if (src.isBlank() || src.startsWith("data:")) return null
+        val resolved = if (src.startsWith("//")) {
+            "https:$src"
+        } else if (src.startsWith("http://") || src.startsWith("https://")) {
+            src
+        } else {
+            absUrl("data-original").ifBlank { absUrl("data-src").ifBlank { absUrl("src") } }
+        }
+        return resolved.takeIf { it.isNotBlank() && !it.startsWith("data:") }
+    }
+
+    private fun fixUrl(url: String?): String? {
+        if (url.isNullOrBlank()) return null
+        val trimmed = url.trim()
+        return when {
+            trimmed.startsWith("//") -> "https:$trimmed"
+            else -> trimmed
+        }.takeIf { it.isNotBlank() && !it.startsWith("data:") }
+    }
 
     companion object {
         private val QUALITY_REGEX = Regex("""(\d{3,4})""")

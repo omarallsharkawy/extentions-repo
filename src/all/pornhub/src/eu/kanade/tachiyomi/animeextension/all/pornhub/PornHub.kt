@@ -15,6 +15,7 @@ import eu.kanade.tachiyomi.util.asJsoup
 import keiyoushi.lib.cookieinterceptor.CookieInterceptor
 import keiyoushi.utils.addListPreference
 import keiyoushi.utils.getPreferencesLazy
+import keiyoushi.utils.parallelCatchingFlatMapBlocking
 import keiyoushi.utils.parseAs
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.JsonArray
@@ -89,15 +90,18 @@ class PornHub :
             ?: element.selectFirst("span.title a, a.thumbnailTitle")?.attr("title")?.ifBlank { null }
             ?: element.selectFirst("span.title a, a.thumbnailTitle")?.text().orEmpty()
         thumbnail_url = element.selectFirst("div.phimage img, img")?.let { img ->
-            img.attr("data-mediumthumb").ifBlank { null }
+            img.attr("data-highres").ifBlank { null }
+                ?: img.attr("data-poster").ifBlank { null }
+                ?: img.attr("poster").ifBlank { null }
+                ?: img.attr("data-mediumthumb").ifBlank { null }
                 ?: img.attr("data-src").ifBlank { null }
                 ?: img.attr("data-thumb_url").ifBlank { null }
+                ?: img.attr("data-smallthumb").ifBlank { null }
                 ?: img.attr("src").ifBlank { null }
         }
     }
 
-    // Site uses infinite-style paging without a reliable "next" control; treat a full page as more.
-    override fun popularAnimeNextPageSelector(): String = popularAnimeSelector()
+    override fun popularAnimeNextPageSelector(): String = "li.page_next a, a.page_next, a[rel=next], li.next a, a.next"
 
     override fun popularAnimeParse(response: Response): AnimesPage {
         val document = response.asJsoup()
@@ -273,17 +277,18 @@ class PornHub :
 
         // MP4 fallback via get_media XHR (returns JSON list of progressive qualities when available).
         if (videos.none { it.quality.contains("MP4", ignoreCase = true) } || videos.isEmpty()) {
-            for (mediaUrl in getMediaUrls) {
-                for (def in fetchGetMedia(mediaUrl, pageUrl)) {
-                    val mp4 = def.resolvedUrl() ?: continue
-                    if ("/video/get_media" in mp4) continue
-                    val label = def.qualityLabel().ifBlank { "Default" }
-                    if (def.hasEmptyQuality() && def.height == null && label == "Default") continue
-                    videos += if (mp4.contains(".m3u8")) {
-                        videosFromDefinition(def, videoHeaders, prefix = "")
-                    } else {
-                        listOf(Video(mp4, "MP4 $label".trim(), mp4, videoHeaders))
-                    }
+            val getMediaDefs = getMediaUrls.parallelCatchingFlatMapBlocking { mediaUrl ->
+                fetchGetMedia(mediaUrl, pageUrl)
+            }
+            for (def in getMediaDefs) {
+                val mp4 = def.resolvedUrl() ?: continue
+                if ("/video/get_media" in mp4) continue
+                val label = def.qualityLabel().ifBlank { "Default" }
+                if (def.hasEmptyQuality() && def.height == null && label == "Default") continue
+                videos += if (mp4.contains(".m3u8")) {
+                    videosFromDefinition(def, videoHeaders, prefix = "")
+                } else {
+                    listOf(Video(mp4, "MP4 $label".trim(), mp4, videoHeaders))
                 }
             }
         }

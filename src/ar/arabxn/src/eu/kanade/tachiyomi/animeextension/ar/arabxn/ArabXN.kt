@@ -61,10 +61,7 @@ class ArabXN :
         title = link?.attr("title")?.ifBlank { null }
             ?: element.selectFirst("strong.title, .row_titleVideo .title, .title")?.text()?.trim()
             ?: link?.text()?.trim().orEmpty()
-        thumbnail_url = element.selectFirst("img")?.let { img ->
-            img.attr("abs:data-src").ifBlank { null }
-                ?: img.attr("abs:src").ifBlank { null }
-        }
+        thumbnail_url = element.selectFirst("img")?.getImageUrl()
     }
 
     override fun popularAnimeNextPageSelector(): String = "div.pagination a[href]"
@@ -159,9 +156,11 @@ class ArabXN :
                 ?.let { append(it) }
         }.trim().ifBlank { null }
 
-        thumbnail_url = document.selectFirst("meta[property=og:image]")?.attr("content")
-            ?: document.selectFirst("video#my-video")?.attr("poster")
-            ?: document.selectFirst("video[poster]")?.attr("abs:poster")
+        thumbnail_url = fixUrl(
+            document.selectFirst("meta[property=og:image]")?.attr("content")
+                ?: document.selectFirst("video#my-video")?.attr("poster")
+                ?: document.selectFirst("video[poster]")?.attr("abs:poster"),
+        )
 
         status = SAnime.COMPLETED
     }
@@ -360,6 +359,36 @@ class ArabXN :
     }
 
     private inline fun <reified T> AnimeFilterList.firstInstanceOrNull(): T? = firstOrNull { it is T } as? T
+
+    private fun Element.getImageUrl(): String? {
+        val src = when {
+            hasAttr("data-original") -> attr("data-original")
+            hasAttr("data-src") -> attr("data-src")
+            hasAttr("data-lazy-src") -> attr("data-lazy-src")
+            hasAttr("srcset") -> attr("srcset").substringBefore(" ").substringBefore(",")
+            hasAttr("poster") -> attr("poster")
+            else -> attr("src")
+        }.ifBlank { attr("src") }.trim()
+
+        if (src.isBlank() || src.startsWith("data:")) return null
+        val resolved = if (src.startsWith("//")) {
+            "https:$src"
+        } else if (src.startsWith("http://") || src.startsWith("https://")) {
+            src
+        } else {
+            absUrl("data-original").ifBlank { absUrl("data-src").ifBlank { absUrl("src") } }
+        }
+        return resolved.takeIf { it.isNotBlank() && !it.startsWith("data:") }
+    }
+
+    private fun fixUrl(url: String?): String? {
+        if (url.isNullOrBlank()) return null
+        val trimmed = url.trim()
+        return when {
+            trimmed.startsWith("//") -> "https:$trimmed"
+            else -> trimmed
+        }.takeIf { it.isNotBlank() && !it.startsWith("data:") }
+    }
 
     companion object {
         private val QUALITY_REGEX = Regex("""(\d{3,4})""")

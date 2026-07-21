@@ -15,6 +15,7 @@ import eu.kanade.tachiyomi.animesource.online.ParsedAnimeHttpSource
 import eu.kanade.tachiyomi.network.GET
 import eu.kanade.tachiyomi.util.asJsoup
 import keiyoushi.utils.getPreferencesLazy
+import keiyoushi.utils.parallelMapNotNullBlocking
 import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.Request
 import okhttp3.Response
@@ -62,7 +63,25 @@ class Rule34Video :
     override fun popularAnimeFromElement(element: Element) = SAnime.create().apply {
         setUrlWithoutDomain(element.selectFirst("a.th")!!.attr("href"))
         title = element.selectFirst("a.th div.thumb_title")!!.text()
-        thumbnail_url = element.selectFirst("a.th div.img img")?.attr("abs:data-original")
+        thumbnail_url = element.getImageUrl()
+    }
+
+    private fun Element.getImageUrl(): String? {
+        val img = if (tagName() == "img") this else selectFirst("img")
+        return img?.let {
+            it.attr("abs:data-original").ifEmpty {
+                it.attr("abs:data-src").ifEmpty {
+                    it.attr("abs:poster").ifEmpty {
+                        it.attr("abs:src")
+                    }
+                }
+            }
+        }?.takeIf { it.isNotBlank() }?.let { url ->
+            when {
+                url.startsWith("//") -> "https:$url"
+                else -> url
+            }
+        }
     }
 
     override fun popularAnimeNextPageSelector() = "div.item.pager.next a"
@@ -104,9 +123,13 @@ class Rule34Video :
 
         val tagFilter = (filters.find { it is TagFilter } as? TagFilter)?.state ?: ""
 
-        val url = "$baseUrl/search_ajax.php?tag=${tagFilter.ifBlank { "." }}"
-        val response = client.newCall(GET(url, headers)).execute()
-        tagDocument = response.asJsoup()
+        if (tagFilter.isNotBlank()) {
+            val url = "$baseUrl/search_ajax.php?tag=$tagFilter"
+            runCatching {
+                val response = client.newCall(GET(url, headers)).execute()
+                tagDocument = response.asJsoup()
+            }
+        }
 
         val tagSearch = filters.getUriPart<TagSearch>()
 
@@ -222,7 +245,7 @@ class Rule34Video :
         val document = response.asJsoup()
 
         return document.select("div.label:contains(Download) ~ a.tag_item")
-            .mapNotNull { element ->
+            .parallelMapNotNullBlocking { element ->
                 val originalUrl = element.attr("href")
                 // We need to do that because this url returns a http 403 error
                 // if you try to connect using http/1.1, which is the protocol
@@ -230,7 +253,7 @@ class Rule34Video :
                 // fetch the video url first via okhttp and then pass it for the player.
                 val url = noRedirectClient.newCall(GET(originalUrl, headers)).execute()
                     .use { it.headers["location"] }
-                    ?: return@mapNotNull null
+                    ?: return@parallelMapNotNullBlocking null
                 val quality = element.text().substringAfter(" ")
                 Video(url, quality, url, headers)
             }
