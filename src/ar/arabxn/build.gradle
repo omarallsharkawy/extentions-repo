@@ -1,8 +1,8 @@
 ext {
     extName = 'ArabXN'
     extClass = '.ArabXN'
-    extVersionCode = 10
-    overrideVersionCode = 10
+    extVersionCode = 13
+    overrideVersionCode = 13
     isNsfw = true
 }
 

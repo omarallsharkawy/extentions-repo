@@ -52,12 +52,14 @@ class Hstream :
 
     override fun popularAnimeFromElement(element: Element) = SAnime.create().apply {
         setUrlWithoutDomain(element.attr("href"))
-        title = element.selectFirst("img")!!.attr("alt")
+        val baseTitle = element.selectFirst("img")!!.attr("alt")
+        val duration = element.selectFirst("span.duration, span.time, div.duration, time, span.badge, div.badge, div.time, span.time-length, div.absolute.bottom-0")?.text()?.trim()
+        title = if (!duration.isNullOrEmpty()) "[$duration] $baseTitle" else baseTitle
         val episode = url.substringAfterLast("-").substringBefore("/")
         thumbnail_url = "$baseUrl/images${url.substringBeforeLast("-")}/cover-ep-$episode.webp"
     }
 
-    override fun popularAnimeNextPageSelector() = "span[aria-current] + a"
+    override fun popularAnimeNextPageSelector() = "span[aria-current] + a, a[rel=next], ul.pagination a[rel=next]"
 
     // =============================== Latest ===============================
     override fun latestUpdatesRequest(page: Int) = GET("$baseUrl/search?order=recently-uploaded&page=$page")

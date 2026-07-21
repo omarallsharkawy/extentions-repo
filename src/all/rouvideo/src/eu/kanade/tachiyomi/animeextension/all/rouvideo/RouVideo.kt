@@ -223,12 +223,17 @@ class RouVideo(
                 addPathSegment("search")
                 addQueryParameter("q", query)
 
-                // Add category to search query if it's a specific one (not null or empty string)
-                if (!categoryUriPart.isNullOrEmpty()) {
+                // Add category to search query if it's a specific one
+                if (!categoryUriPart.isNullOrEmpty() && categoryUriPart != FEATURED && categoryUriPart != ALL_VIDEOS) {
                     addQueryParameter(CATEGORY_SLUG, categoryUriPart)
                 }
+                if (tagFilter != null && !tagFilter.isEmpty()) {
+                    addQueryParameter("tag", tagFilter.toUriPart())
+                }
+                if (sortFilter != null) {
+                    addQueryParameter("order", sortFilter.toUriPart())
+                }
                 addQueryParameter("page", page.toString())
-                // Sort filter is not applied for text search
             }.build()
             return handleSearchAnime(url.toString(), docHeaders, ::popularAnimeParse)
         }

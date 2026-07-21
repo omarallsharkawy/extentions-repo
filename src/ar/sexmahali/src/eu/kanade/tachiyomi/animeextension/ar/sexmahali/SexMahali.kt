@@ -57,10 +57,24 @@ class SexMahali :
     override fun popularAnimeFromElement(element: Element): SAnime = SAnime.create().apply {
         val link = element.selectFirst("a[href]")!!
         setUrlWithoutDomain(link.attr("abs:href"))
-        title = link.attr("title").ifBlank {
+        val rawTitle = link.attr("title").ifBlank {
             element.selectFirst("header.entry-header span, header.entry-header")?.text().orEmpty()
         }.ifBlank { link.text() }.trim()
+        val duration = element.extractDuration()
+        title = if (!duration.isNullOrBlank() && !rawTitle.contains(duration)) {
+            "[$duration] $rawTitle"
+        } else {
+            rawTitle
+        }
         thumbnail_url = element.selectFirst("img")?.getImageUrl()
+    }
+
+    private fun Element.extractDuration(): String? {
+        val target = selectFirst("span.duration, span.time, div.duration, span.clock, time, .duration, .time, .video-duration")
+            ?: parent()?.selectFirst("span.duration, span.time, div.duration, span.clock, time, .duration, .time, .video-duration")
+        val text = target?.text()?.trim().orEmpty()
+        if (text.isBlank()) return null
+        return text.replace(Regex("""^[^\d]+"""), "").trim().ifBlank { text }
     }
 
     override fun popularAnimeNextPageSelector(): String? = null
@@ -83,17 +97,31 @@ class SexMahali :
 
     override fun searchAnimeRequest(page: Int, query: String, filters: AnimeFilterList): Request {
         val sort = filters.firstInstanceOrNull<SortFilter>()?.selected.orEmpty()
-            .ifBlank { SORT_LATEST }
         val category = filters.firstInstanceOrNull<CategoryFilter>()?.selected.orEmpty()
 
-        return when {
-            query.isNotBlank() -> GET(searchUrl(page, query.trim()), headers)
-
-            category.isNotBlank() || sort.isNotBlank() ->
-                GET(browseUrl(page, sort, category), headers)
-
-            else -> popularAnimeRequest(page)
+        if (query.isNotBlank()) {
+            val builder = baseUrl.toHttpUrl().newBuilder()
+            if (category.isNotBlank()) {
+                category.trim('/').split('/').filter { it.isNotEmpty() }.forEach {
+                    builder.addPathSegment(it)
+                }
+            }
+            if (page > 1) {
+                builder.addPathSegment("page")
+                builder.addPathSegment(page.toString())
+            }
+            builder.addQueryParameter("s", query.trim())
+            if (sort.isNotBlank()) {
+                builder.addQueryParameter("filter", sort)
+            }
+            return GET(builder.build(), headers)
         }
+
+        if (category.isNotBlank() || sort.isNotBlank()) {
+            return GET(browseUrl(page, sort.ifBlank { SORT_LATEST }, category), headers)
+        }
+
+        return popularAnimeRequest(page)
     }
 
     override fun searchAnimeSelector(): String = popularAnimeSelector()
@@ -107,7 +135,6 @@ class SexMahali :
     // ============================== Filters ===============================
 
     override fun getFilterList(): AnimeFilterList = AnimeFilterList(
-        AnimeFilter.Header("Text search ignores filters"),
         SortFilter(),
         CategoryFilter(),
     )
@@ -383,12 +410,14 @@ class SexMahali :
             .map { popularAnimeFromElement(it) }
             .filter { it.url.isNotBlank() && it.title.isNotBlank() }
 
-        val current = document.selectFirst("div.pagination a.current")?.text()?.toIntOrNull() ?: 1
-        val hasNext = document.select("div.pagination a").any {
+        val current = document.selectFirst("div.pagination .current, div.pagination span.current, div.pagination a.current")?.text()?.toIntOrNull() ?: 1
+        val hasNextLink = document.selectFirst("div.pagination a.next, div.pagination .current + a, div.pagination span.current + a, div.pagination a.next.page-numbers") != null
+        val hasHigherPage = document.select("div.pagination a, div.pagination span").any {
             (it.text().toIntOrNull() ?: -1) > current
         }
+        val hasNext = (hasNextLink || hasHigherPage) && animes.isNotEmpty()
 
-        return AnimesPage(animes, hasNext && animes.isNotEmpty())
+        return AnimesPage(animes, hasNext)
     }
 
     private fun browseUrl(page: Int, sort: String, categoryPath: String): String {

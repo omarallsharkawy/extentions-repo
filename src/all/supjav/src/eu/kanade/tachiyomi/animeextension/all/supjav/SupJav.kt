@@ -68,10 +68,20 @@ class SupJav(override val lang: String = "en") :
         setUrlWithoutDomain(element.attr("href"))
 
         val img = element.selectFirst("img")
-        title = img?.attr("alt")?.ifBlank { img.attr("title") }
+        val rawTitle = img?.attr("alt")?.ifBlank { img.attr("title") }
             ?.ifBlank { element.text() }
             ?.ifBlank { element.attr("title") }
             .orEmpty().trim()
+
+        val duration = element.selectFirst("span.duration, span.runtime, span.time, span.ribbon, .duration, .runtime")?.text()?.trim()
+            ?: element.parent()?.selectFirst("span.duration, span.runtime, span.time, span.ribbon, .duration, .runtime")?.text()?.trim()
+                .orEmpty()
+
+        title = if (duration.isNotBlank() && !rawTitle.contains(duration)) {
+            "[$duration] $rawTitle"
+        } else {
+            rawTitle
+        }
 
         img?.let {
             val raw = it.attr("data-original")
@@ -112,7 +122,7 @@ class SupJav(override val lang: String = "en") :
             return AnimesPage(emptyList(), false)
         }
 
-        val hasNextPage = popularAnimeNextPageSelector()?.let { nextSelector ->
+        val hasNextPage = popularAnimeNextPageSelector().let { nextSelector ->
             val nextEl = document.select(nextSelector).firstOrNull()
             if (nextEl != null) {
                 true

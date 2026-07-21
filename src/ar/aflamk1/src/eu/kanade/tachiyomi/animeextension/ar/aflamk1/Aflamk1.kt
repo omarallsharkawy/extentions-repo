@@ -59,9 +59,18 @@ class Aflamk1 :
 
     override fun popularAnimeFromElement(element: Element): SAnime = SAnime.create().apply {
         setUrlWithoutDomain(element.attr("abs:href"))
-        title = element.attr("title").ifBlank {
+        val rawTitle = element.attr("title").ifBlank {
             element.selectFirst("strong.title")?.text().orEmpty()
         }.trim()
+        val parentCard = element.parent() ?: element
+        val duration = parentCard.selectFirst(
+            "div.duration, span.duration, div.time, span.time, span.clock, time, div.timevideo1, span.label",
+        )?.text()?.trim()?.ifBlank { null }
+        title = if (!duration.isNullOrEmpty() && !rawTitle.contains(duration)) {
+            "[$duration] $rawTitle"
+        } else {
+            rawTitle
+        }
         thumbnail_url = element.selectFirst("img.thumb, img")?.let { img ->
             img.attr("abs:data-original").ifBlank { null }
                 ?: img.attr("abs:data-src").ifBlank { null }
@@ -72,7 +81,7 @@ class Aflamk1 :
         }
     }
 
-    override fun popularAnimeNextPageSelector(): String = "div.pagination li.page a, div.pagination li.next a"
+    override fun popularAnimeNextPageSelector(): String = "div.pagination li.next a, a[rel=next], div.pagination a.next"
 
     override fun popularAnimeParse(response: Response): AnimesPage {
         val document = response.asJsoup()
@@ -105,9 +114,11 @@ class Aflamk1 :
 
         return when {
             query.isNotBlank() -> {
+                val fullQuery = if (tag.isNotBlank()) "${query.trim()} $tag" else query.trim()
                 val url = "$baseUrl/search/".toHttpUrl().newBuilder()
-                    .addQueryParameter("q", query.trim())
+                    .addQueryParameter("q", fullQuery)
                     .apply {
+                        if (sort.isNotBlank()) addQueryParameter("sort_by", sort)
                         if (page > 1) addQueryParameter("from_videos", page.toString())
                     }
                     .build()

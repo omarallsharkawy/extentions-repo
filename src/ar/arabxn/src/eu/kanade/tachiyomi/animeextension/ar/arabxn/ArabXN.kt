@@ -58,13 +58,21 @@ class ArabXN :
             ?: element.selectFirst("a[href]")
         val href = link?.attr("abs:href").orEmpty()
         setUrlWithoutDomain(href)
-        title = link?.attr("title")?.ifBlank { null }
+        val rawTitle = link?.attr("title")?.ifBlank { null }
             ?: element.selectFirst("strong.title, .row_titleVideo .title, .title")?.text()?.trim()
             ?: link?.text()?.trim().orEmpty()
+        val duration = element.selectFirst(
+            "div.timevideo1, div.timevideo, div.duration, span.duration, span.time, span.clock, time",
+        )?.text()?.trim()?.ifBlank { null }
+        title = if (!duration.isNullOrEmpty() && !rawTitle.contains(duration)) {
+            "[$duration] $rawTitle"
+        } else {
+            rawTitle
+        }
         thumbnail_url = element.selectFirst("img")?.getImageUrl()
     }
 
-    override fun popularAnimeNextPageSelector(): String = "div.pagination a[href]"
+    override fun popularAnimeNextPageSelector(): String = "link[rel=next], div.pagination span.current-page ~ a[href], div.pagination .current ~ a[href], div.pagination a.next, a[rel=next]"
 
     override fun popularAnimeParse(response: Response): AnimesPage {
         val document = response.asJsoup()
@@ -106,8 +114,24 @@ class ArabXN :
         val tag = filters.firstInstanceOrNull<TagFilter>()?.state?.trim().orEmpty()
         val pornstar = filters.firstInstanceOrNull<PornstarFilter>()?.state?.trim().orEmpty()
 
+        val fullQuery = buildString {
+            append(query.trim())
+            if (channel.isNotBlank()) {
+                if (isNotEmpty()) append(" ")
+                append(channel)
+            }
+            if (pornstar.isNotBlank()) {
+                if (isNotEmpty()) append(" ")
+                append(pornstar)
+            }
+            if (tag.isNotBlank()) {
+                if (isNotEmpty()) append(" ")
+                append(tag)
+            }
+        }.trim()
+
         val path = when {
-            query.isNotBlank() -> searchPath(query.trim(), page)
+            fullQuery.isNotBlank() -> searchPath(fullQuery, page)
             channel.isNotBlank() -> channelPath(channel, page)
             pornstar.isNotBlank() -> pornstarPath(pornstar, page)
             tag.isNotBlank() -> tagPath(tag, page)

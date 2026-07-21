@@ -95,11 +95,15 @@ class Javgg :
         val animeList = elements.map { element ->
             SAnime.create().apply {
                 setUrlWithoutDomain(element.selectFirst("a")!!.attr("abs:href"))
-                title = element.selectFirst(".data h3")!!.text()
+                val rawTitle = element.selectFirst(".data h3")!!.text()
+                val duration = element.selectFirst("span.duration, span.time, div.duration, time, .time, .duration, span.runtime, .poster span")
+                    ?.text()?.trim()
+                    ?.takeIf { d -> d.contains(":") }
+                title = if (!duration.isNullOrBlank()) "[$duration] $rawTitle" else rawTitle
                 thumbnail_url = element.selectFirst(".poster")?.getImageUrl()
             }
         }
-        val nextPage = document.select("#nextpagination").any() && animeList.isNotEmpty()
+        val nextPage = document.select("#nextpagination, .pagination a.next, a[rel=next], .pagination span.current + a, div.resppages a:contains(>)").any() && animeList.isNotEmpty()
         return AnimesPage(animeList, nextPage)
     }
 
@@ -108,7 +112,7 @@ class Javgg :
     override fun latestUpdatesRequest(page: Int) = GET("$baseUrl/new-post/page/$page", headers)
 
     override fun searchAnimeRequest(page: Int, query: String, filters: AnimeFilterList): Request = when {
-        query.isNotBlank() -> GET("$baseUrl/jav/page/$page?s=$query", headers)
+        query.isNotBlank() -> GET("$baseUrl/jav/page/$page?s=${query.trim()}", headers)
         else -> popularAnimeRequest(page)
     }
 
@@ -118,11 +122,15 @@ class Javgg :
         val animeList = elements.map { element ->
             SAnime.create().apply {
                 setUrlWithoutDomain(element.selectFirst("a")!!.attr("abs:href"))
-                title = element.selectFirst(".details .title")!!.text()
+                val rawTitle = element.selectFirst(".details .title")!!.text()
+                val duration = element.selectFirst("span.duration, span.time, div.duration, time, .time, .duration, span.runtime, .image span")
+                    ?.text()?.trim()
+                    ?.takeIf { d -> d.contains(":") }
+                title = if (!duration.isNullOrBlank()) "[$duration] $rawTitle" else rawTitle
                 thumbnail_url = element.selectFirst(".image")?.getImageUrl()
             }
         }
-        val nextPage = document.select("#nextpagination").any() && animeList.isNotEmpty()
+        val nextPage = document.select("#nextpagination, .pagination a.next, a[rel=next], .pagination span.current + a, div.resppages a:contains(>)").any() && animeList.isNotEmpty()
         return AnimesPage(animeList, nextPage)
     }
 

@@ -86,9 +86,15 @@ class PornHub :
             ?: element.selectFirst("a[href*=view_video]")?.attr("abs:href")
             ?: ""
         setUrlWithoutDomain(href)
-        title = link?.attr("title")?.ifBlank { null }
+        val rawTitle = link?.attr("title")?.ifBlank { null }
             ?: element.selectFirst("span.title a, a.thumbnailTitle")?.attr("title")?.ifBlank { null }
             ?: element.selectFirst("span.title a, a.thumbnailTitle")?.text().orEmpty()
+        val duration = element.selectFirst("span.duration, var.duration, .duration, span.video-duration, var.duration")?.text()?.trim().orEmpty()
+        title = if (duration.isNotBlank() && !rawTitle.contains(duration)) {
+            "[$duration] $rawTitle"
+        } else {
+            rawTitle
+        }
         thumbnail_url = element.selectFirst("div.phimage img, img")?.let { img ->
             img.attr("data-highres").ifBlank { null }
                 ?: img.attr("data-poster").ifBlank { null }
@@ -102,7 +108,9 @@ class PornHub :
         }
     }
 
-    override fun popularAnimeNextPageSelector(): String = "li.page_next a, a.page_next, a[rel=next], li.next a, a.next, a:has(i.ph-icon-chevron-right)"
+    override fun popularAnimeNextPageSelector(): String = "li.page_next:not(.page_disabled):not(.disabled) a, " +
+        "a.page_next:not(.disabled), a[rel=next]:not(.disabled), li.next:not(.disabled) a, a.next:not(.disabled), " +
+        "a:has(i.ph-icon-chevron-right):not(.disabled), div.pagination li.active + li a, div.pagination span.current + a"
 
     override fun popularAnimeParse(response: Response): AnimesPage {
         val document = response.asJsoup()
@@ -110,7 +118,7 @@ class PornHub :
             .map { popularAnimeFromElement(it) }
             .filter { it.url.isNotBlank() && it.title.isNotBlank() }
             .distinctBy { it.url }
-        val hasNext = document.selectFirst(popularAnimeNextPageSelector()) != null
+        val hasNext = document.selectFirst(popularAnimeNextPageSelector()) != null && animes.isNotEmpty()
         return AnimesPage(animes, hasNext)
     }
 

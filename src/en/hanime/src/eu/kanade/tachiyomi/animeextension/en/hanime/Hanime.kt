@@ -259,11 +259,24 @@ class Hanime :
         return paginateHits(allHits, page, orderBy = "created_at_unix", ordering = "desc")
     }
 
-    // ── Hit parsing & pagination ───────────────────────────────────────
+    private fun formatDuration(durationInMs: Long?): String {
+        if (durationInMs == null || durationInMs <= 0) return ""
+        val totalSeconds = durationInMs / 1000
+        val hours = totalSeconds / 3600
+        val minutes = (totalSeconds % 3600) / 60
+        val seconds = totalSeconds % 60
+        return if (hours > 0) {
+            String.format("%d:%02d:%02d", hours, minutes, seconds)
+        } else {
+            String.format("%02d:%02d", minutes, seconds)
+        }
+    }
 
     private fun parseHitsToAnimeList(hits: List<HitsModel>): List<SAnime> = hits.groupBy { getTitle(it.name) }.map { (_, items) -> items.first() }.map { item ->
         SAnime.create().apply {
-            title = getTitle(item.name)
+            val baseTitle = getTitle(item.name)
+            val durationStr = formatDuration(item.durationInMs)
+            title = if (durationStr.isNotBlank()) "[$durationStr] $baseTitle" else baseTitle
             thumbnail_url = (item.coverUrl ?: item.posterUrl)?.let { if (it.startsWith("//")) "https:$it" else it }
             author = item.brand
             description = item.description?.replace(HTML_TAG_REGEX, "")
@@ -430,7 +443,9 @@ class Hanime :
             val hit = fetchSearchHits().find { it.slug == slug }
             if (hit != null) {
                 return anime.apply {
-                    title = getTitle(hit.name)
+                    val baseTitle = getTitle(hit.name)
+                    val durationStr = formatDuration(hit.durationInMs)
+                    title = if (durationStr.isNotBlank()) "[$durationStr] $baseTitle" else baseTitle
                     thumbnail_url = (hit.coverUrl ?: hit.posterUrl)?.let { if (it.startsWith("//")) "https:$it" else it }
                     author = hit.brand
                     description = hit.description?.replace(HTML_TAG_REGEX, "")?.trim()

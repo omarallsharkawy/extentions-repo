@@ -88,7 +88,11 @@ class JavGuru :
                     getIDFromUrl(a)?.let { url = it }
                         ?: setUrlWithoutDomain(a.attr("href"))
 
-                    title = a.text()
+                    val rawTitle = a.text()
+                    val duration = element.selectFirst("span.duration, span.time, div.duration, time, .time, .duration, span.runtime")
+                        ?.text()?.trim()
+                        ?.takeIf { d -> d.contains(":") }
+                    title = if (!duration.isNullOrBlank()) "[$duration] $rawTitle" else rawTitle
                 }
                 thumbnail_url = element.getImageUrl()
             }
@@ -114,7 +118,11 @@ class JavGuru :
                         ?: setUrlWithoutDomain(a.attr("href"))
                 }
                 thumbnail_url = element.getImageUrl()
-                title = element.select("h2 > a").text()
+                val rawTitle = element.select("h2 > a").text()
+                val duration = element.selectFirst("span.duration, span.time, div.duration, time, .time, .duration, span.runtime, .inside-article span")
+                    ?.text()?.trim()
+                    ?.takeIf { d -> d.contains(":") }
+                title = if (!duration.isNullOrBlank()) "[$duration] $rawTitle" else rawTitle
             }
         }
 
@@ -126,7 +134,11 @@ class JavGuru :
             ?.attr("href")
             .pageNumberFromUrlOrNull() ?: 1
 
-        return AnimesPage(entries, page < lastPage)
+        val hasNextPage = entries.isNotEmpty() && (
+            page < lastPage || document.select("div.wp-pagenavi a.next, div.wp-pagenavi a.nextpostslink, a[rel=next], .pagination a.next").isNotEmpty()
+            )
+
+        return AnimesPage(entries, hasNextPage)
     }
 
     // ========================= Search =========================
@@ -211,7 +223,21 @@ class JavGuru :
     override fun searchAnimeRequest(page: Int, query: String, filters: AnimeFilterList): Request {
         val url = baseUrl.toHttpUrl().newBuilder().apply {
             if (page > 1) addPathSegments("page/$page/")
-            addQueryParameter("s", query)
+            if (query.isNotEmpty()) {
+                addQueryParameter("s", query.trim())
+            }
+            filters.forEach { filter ->
+                when (filter) {
+                    is CategoryFilter -> {
+                        if (filter.state != 0) {
+                            val catSlug = filter.toUrlPart().trim('/').substringAfterLast('/')
+                            if (catSlug.isNotEmpty()) addQueryParameter("category_name", catSlug)
+                        }
+                    }
+
+                    else -> {}
+                }
+            }
         }.build().toString()
 
         return GET(url, headers)

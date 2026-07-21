@@ -37,7 +37,7 @@ class HentaiTorrent :
 
     private val preferences by getPreferencesLazy()
 
-    override val supportsLatest = false
+    override val supportsLatest = true
 
     override fun headersBuilder(): Headers.Builder = super.headersBuilder()
         .add("Referer", baseUrl)
@@ -50,7 +50,13 @@ class HentaiTorrent :
     override fun popularAnimeFromElement(element: Element): SAnime {
         val anime = SAnime.create()
         anime.setUrlWithoutDomain(element.select("a.overlay").attr("href"))
-        anime.title = element.select("a.overlay").text().trim()
+        val rawTitle = element.select("a.overlay").text().trim()
+        val duration = element.selectFirst("span.duration, span.time, div.duration, time, span.badge, .duration, .time, .length")?.text()?.trim()
+        anime.title = if (!duration.isNullOrEmpty() && !rawTitle.contains(duration)) {
+            "$rawTitle ($duration)"
+        } else {
+            rawTitle
+        }
         anime.thumbnail_url = element.getImageUrl()
 
         return anime
@@ -74,16 +80,16 @@ class HentaiTorrent :
         }
     }
 
-    override fun popularAnimeNextPageSelector(): String = "div.pagination a:contains(Next)"
+    override fun popularAnimeNextPageSelector(): String = "div.pagination a.active + a, div.pagination a:contains(Next), div.pagination a:contains(next), div.pagination a.next, div.pagination a[rel=next], a[rel=next]"
 
     // =============================== Latest ===============================
-    override fun latestUpdatesRequest(page: Int): Request = throw UnsupportedOperationException()
+    override fun latestUpdatesRequest(page: Int): Request = popularAnimeRequest(page)
 
-    override fun latestUpdatesSelector(): String = throw UnsupportedOperationException()
+    override fun latestUpdatesSelector(): String = popularAnimeSelector()
 
-    override fun latestUpdatesFromElement(element: Element): SAnime = throw UnsupportedOperationException()
+    override fun latestUpdatesFromElement(element: Element): SAnime = popularAnimeFromElement(element)
 
-    override fun latestUpdatesNextPageSelector() = throw UnsupportedOperationException()
+    override fun latestUpdatesNextPageSelector() = popularAnimeNextPageSelector()
 
     // =============================== Search ===============================
     override suspend fun getSearchAnime(page: Int, query: String, filters: AnimeFilterList): AnimesPage {
@@ -105,18 +111,30 @@ class HentaiTorrent :
     }
 
     override fun searchAnimeRequest(page: Int, query: String, filters: AnimeFilterList): Request {
-        val encodedQuery = query.replace(" ", "+")
         val cat = filters.firstNotNullOfOrNull { filter ->
             if (filter is CategoriesList) getCategory()[filter.state].id else null
         } ?: "0"
 
-        return if (query.isNotEmpty()) {
-            GET("$baseUrl/s.php?search=$encodedQuery&page=$page")
-        } else if (cat != "0" && cat.isNotEmpty()) {
-            GET("$baseUrl/catalog/$cat/page/$page")
-        } else {
-            GET("$baseUrl/page/$page")
-        }
+        val url = baseUrl.toHttpUrl().newBuilder().apply {
+            if (query.isNotEmpty()) {
+                addPathSegment("s.php")
+                addQueryParameter("search", query)
+                if (cat != "0" && cat.isNotEmpty()) {
+                    addQueryParameter("cat", cat)
+                }
+                addQueryParameter("page", page.toString())
+            } else if (cat != "0" && cat.isNotEmpty()) {
+                addPathSegment("catalog")
+                addPathSegment(cat)
+                addPathSegment("page")
+                addPathSegment(page.toString())
+            } else {
+                addPathSegment("page")
+                addPathSegment(page.toString())
+            }
+        }.build()
+
+        return GET(url.toString(), headers)
     }
 
     override fun searchAnimeSelector() = popularAnimeSelector()
@@ -199,13 +217,17 @@ class HentaiTorrent :
     }
 
     private fun fetchTrackers(): String {
-        val request = Request.Builder()
-            .url("https://raw.githubusercontent.com/ngosang/trackerslist/refs/heads/master/trackers_all_http.txt")
-            .build()
+        return try {
+            val request = Request.Builder()
+                .url("https://raw.githubusercontent.com/ngosang/trackerslist/refs/heads/master/trackers_all_http.txt")
+                .build()
 
-        client.newCall(request).execute().use { response ->
-            if (!response.isSuccessful) throw Exception("Unexpected code $response")
-            return response.body.string().trim()
+            client.newCall(request).execute().use { response ->
+                if (!response.isSuccessful) return DEFAULT_TRACKERS
+                response.body.string().trim().ifBlank { DEFAULT_TRACKERS }
+            }
+        } catch (_: Exception) {
+            DEFAULT_TRACKERS
         }
     }
 
@@ -280,5 +302,7 @@ class HentaiTorrent :
 
         private const val IS_AUDIO_KEY = "audio"
         private const val IS_AUDIO_DEFAULT = false
+
+        private const val DEFAULT_TRACKERS = "http://tracker.opentrackr.org:1337/announce\nhttp://open.acgnxtracker.com:80/announce"
     }
 }

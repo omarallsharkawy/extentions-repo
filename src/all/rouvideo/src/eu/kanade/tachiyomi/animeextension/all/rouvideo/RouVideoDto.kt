@@ -164,7 +164,12 @@ internal object RouVideoDto {
 
         fun toSAnime(): SAnime = SAnime.create().apply {
             url = id
-            title = name
+            val durationStr = if (duration > 0) formatDuration(duration.toInt()) else null
+            title = if (!durationStr.isNullOrEmpty() && !name.contains(durationStr)) {
+                "[$durationStr] $name"
+            } else {
+                name
+            }
             thumbnail_url = if (coverImageUrl.startsWith("//")) "https:$coverImageUrl" else coverImageUrl
             artist = majorCategory
             author = majorCategory

@@ -49,7 +49,9 @@ class HentaiMama :
     override fun popularAnimeFromElement(element: Element): SAnime {
         val anime = SAnime.create()
         anime.setUrlWithoutDomain(element.select("a").attr("href"))
-        anime.title = element.select("div.data h3 a").text()
+        val baseTitle = element.select("div.data h3 a").text()
+        val duration = element.selectFirst("span.duration, span.time, div.duration, time, span.badge, div.badge, span.feist, span.time-length")?.text()?.trim()
+        anime.title = if (!duration.isNullOrEmpty()) "[$duration] $baseTitle" else baseTitle
         anime.thumbnail_url = element.getImageUrl()
         return anime
     }
@@ -174,37 +176,41 @@ class HentaiMama :
 
     override fun searchAnimeFromElement(element: Element): SAnime {
         val anime = SAnime.create()
-        if (filterSearch) {
-            // filter search
-            anime.setUrlWithoutDomain(element.select("a").attr("href"))
-            anime.title = element.select("div.data h3 a").text()
-            anime.thumbnail_url = element.getImageUrl()
-            return anime
+        val baseTitle = if (filterSearch) {
+            element.select("div.data h3 a").text()
         } else {
-            // normal search
+            element.select("div.details > div.title a").text()
+        }
+        val duration = element.selectFirst("span.duration, span.time, div.duration, time, span.badge, div.badge, span.feist, span.time-length")?.text()?.trim()
+        anime.title = if (!duration.isNullOrEmpty()) "[$duration] $baseTitle" else baseTitle
+
+        if (filterSearch) {
+            anime.setUrlWithoutDomain(element.select("a").attr("href"))
+            anime.thumbnail_url = element.getImageUrl()
+        } else {
             anime.setUrlWithoutDomain(element.select("div.details > div.title a").attr("href"))
             anime.thumbnail_url = element.getImageUrl()
-            anime.title = element.select("div.details > div.title a").text()
-            return anime
         }
+        return anime
     }
 
     override fun searchAnimeNextPageSelector(): String = if (filterSearch) {
-        "div.pagination-wraper div.resppages a" // filter search
+        "div.pagination-wraper div.resppages a, div.resppages a" // filter search
     } else {
-        "link[rel=next]" // normal search
+        "link[rel=next], a[rel=next]" // normal search
     }
 
     override fun searchAnimeSelector(): String = "article"
 
     override fun searchAnimeRequest(page: Int, query: String, filters: AnimeFilterList): Request {
         val parameters = getSearchParameters(filters)
-        return if (query.isNotEmpty()) {
-            filterSearch = false
-            GET("$baseUrl/page/$page/?s=${query.replace(Regex("[\\W]"), " ")}") // regular search
+        val cleanQuery = query.trim()
+        filterSearch = true
+        return if (cleanQuery.isNotEmpty()) {
+            val encodedQuery = java.net.URLEncoder.encode(cleanQuery, "UTF-8")
+            GET("$baseUrl/advance-search/page/$page/?s=$encodedQuery&$parameters")
         } else {
-            filterSearch = true
-            GET("$baseUrl/advance-search/page/$page/?$parameters") // filter search
+            GET("$baseUrl/advance-search/page/$page/?$parameters")
         }
     }
 
@@ -234,15 +240,9 @@ class HentaiMama :
 
     override fun latestUpdatesRequest(page: Int): Request = GET("$baseUrl/tvshows/page/$page/")
 
-    override fun latestUpdatesFromElement(element: Element): SAnime {
-        val anime = SAnime.create()
-        anime.setUrlWithoutDomain(element.select("a").attr("href"))
-        anime.title = element.select("div.data h3 a").text()
-        anime.thumbnail_url = element.getImageUrl()
-        return anime
-    }
+    override fun latestUpdatesFromElement(element: Element): SAnime = popularAnimeFromElement(element)
 
-    override fun latestUpdatesNextPageSelector(): String = "link[rel=next]"
+    override fun latestUpdatesNextPageSelector(): String = "div.pagination-wraper div.resppages a, div.resppages a, link[rel=next], a[rel=next]"
 
     // Settings
 
@@ -601,8 +601,6 @@ class HentaiMama :
     }
 
     override fun getFilterList(): AnimeFilterList = AnimeFilterList(
-        AnimeFilter.Header("Ignored if using Text Search"),
-        AnimeFilter.Separator(),
         OrderList(orderName),
         GenreList(getGenres()),
         YearList(getYears()),

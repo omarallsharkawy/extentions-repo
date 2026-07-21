@@ -69,11 +69,19 @@ class Xnxx :
             "a.thumb-link, a.title, div.thumb a, div.thumb-under a[href*=/video]",
         )?.attr("href").orEmpty()
         anime.setUrlWithoutDomain(absUrl(href))
-        anime.title = element.selectFirst("a.title")?.attr("title")?.ifBlank { null }
+        val rawTitle = element.selectFirst("a.title")?.attr("title")?.ifBlank { null }
             ?: element.selectFirst("div.thumb-under a[title], p a[title]")?.attr("title")?.ifBlank { null }
             ?: element.selectFirst("a.title, div.thumb-under a, p a[href*=/video]")?.text().orEmpty()
                 .replace(Regex("""\s+\d+\s*min\s*$"""), "")
                 .trim()
+        val duration = element.selectFirst("span.duration, span.metadata, p.metadata, div.metadata")?.text()?.let { text ->
+            Regex("""\b(\d+:\d+|\d+\s*min)\b""", RegexOption.IGNORE_CASE).find(text)?.value
+        }?.trim().orEmpty()
+        anime.title = if (duration.isNotBlank() && !rawTitle.contains(duration)) {
+            "[$duration] $rawTitle"
+        } else {
+            rawTitle
+        }
         val img = element.selectFirst("div.thumb img, img")
         val rawThumb = img?.attr("data-src")?.ifBlank { null }
             ?: img?.attr("data-original")?.ifBlank { null }
@@ -117,7 +125,7 @@ class Xnxx :
 
     override fun latestUpdatesFromElement(element: Element): SAnime = popularAnimeFromElement(element)
 
-    override fun latestUpdatesNextPageSelector(): String = popularAnimeSelector()
+    override fun latestUpdatesNextPageSelector(): String = popularAnimeNextPageSelector()
 
     override fun latestUpdatesParse(response: Response): AnimesPage {
         val document = response.asJsoup()
@@ -155,10 +163,17 @@ class Xnxx :
 
         // Priority: text query → Tag → Category → broad placeholder if only modifiers
         val term = when {
-            query.isNotBlank() -> query.trim()
+            query.isNotBlank() -> {
+                val filterTerm = tag.ifBlank { category }
+                if (filterTerm.isNotBlank()) "${query.trim()} $filterTerm" else query.trim()
+            }
+
             tag.isNotBlank() -> tag
+
             category.isNotBlank() -> category
+
             hasModifiers -> FILTER_ONLY_TERM
+
             else -> null
         }
 

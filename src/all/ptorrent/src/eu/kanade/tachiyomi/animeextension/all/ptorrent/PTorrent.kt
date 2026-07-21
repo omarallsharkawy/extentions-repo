@@ -37,7 +37,7 @@ class PTorrent :
 
     private val preferences by getPreferencesLazy()
 
-    override val supportsLatest = false
+    override val supportsLatest = true
 
     override fun headersBuilder(): Headers.Builder = super.headersBuilder()
         .add("Referer", baseUrl)
@@ -50,7 +50,13 @@ class PTorrent :
     override fun popularAnimeFromElement(element: Element): SAnime {
         val anime = SAnime.create()
         anime.setUrlWithoutDomain(element.select("a.overlay").attr("href"))
-        anime.title = element.select("a.overlay").text().trim()
+        val rawTitle = element.select("a.overlay").text().trim()
+        val duration = element.selectFirst("span.duration, span.time, div.duration, time, span.badge, .duration, .time, .length")?.text()?.trim()
+        anime.title = if (!duration.isNullOrEmpty() && !rawTitle.contains(duration)) {
+            "$rawTitle ($duration)"
+        } else {
+            rawTitle
+        }
         val img = element.selectFirst("img")
         anime.thumbnail_url = img?.attr("data-src")?.ifBlank { null }
             ?: img?.attr("data-original")?.ifBlank { null }
@@ -60,16 +66,16 @@ class PTorrent :
         return anime
     }
 
-    override fun popularAnimeNextPageSelector(): String = "div.pagination a:contains(Next), div.pagination a:contains(next), div.pagination a.next, div.pagination a[rel=next], a[rel=next]"
+    override fun popularAnimeNextPageSelector(): String = "div.pagination a.active + a, div.pagination a:contains(Next), div.pagination a:contains(next), div.pagination a.next, div.pagination a[rel=next], a[rel=next]"
 
     // =============================== Latest ===============================
-    override fun latestUpdatesRequest(page: Int): Request = throw UnsupportedOperationException()
+    override fun latestUpdatesRequest(page: Int): Request = popularAnimeRequest(page)
 
-    override fun latestUpdatesSelector(): String = throw UnsupportedOperationException()
+    override fun latestUpdatesSelector(): String = popularAnimeSelector()
 
-    override fun latestUpdatesFromElement(element: Element): SAnime = throw UnsupportedOperationException()
+    override fun latestUpdatesFromElement(element: Element): SAnime = popularAnimeFromElement(element)
 
-    override fun latestUpdatesNextPageSelector() = throw UnsupportedOperationException()
+    override fun latestUpdatesNextPageSelector() = popularAnimeNextPageSelector()
 
     // =============================== Search ===============================
     override suspend fun getSearchAnime(page: Int, query: String, filters: AnimeFilterList): AnimesPage {
@@ -92,18 +98,30 @@ class PTorrent :
     }
 
     override fun searchAnimeRequest(page: Int, query: String, filters: AnimeFilterList): Request {
-        val encodedQuery = query.replace(" ", "+")
         val cat = filters.filterIsInstance<CategoriesList>().firstOrNull()?.let {
             getCategory()[it.state].id
         } ?: "0"
 
-        return if (query.isNotEmpty()) {
-            GET("$baseUrl/s.php?search=$encodedQuery&page=$page")
-        } else if (cat != "0") {
-            GET("$baseUrl/catalog/$cat/page/$page")
-        } else {
-            GET("$baseUrl/page/$page")
-        }
+        val url = baseUrl.toHttpUrl().newBuilder().apply {
+            if (query.isNotEmpty()) {
+                addPathSegment("s.php")
+                addQueryParameter("search", query)
+                if (cat != "0") {
+                    addQueryParameter("cat", cat)
+                }
+                addQueryParameter("page", page.toString())
+            } else if (cat != "0") {
+                addPathSegment("catalog")
+                addPathSegment(cat)
+                addPathSegment("page")
+                addPathSegment(page.toString())
+            } else {
+                addPathSegment("page")
+                addPathSegment(page.toString())
+            }
+        }.build()
+
+        return GET(url.toString(), headers)
     }
 
     override fun searchAnimeSelector() = popularAnimeSelector()

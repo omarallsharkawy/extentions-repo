@@ -32,7 +32,7 @@ class Rule34Video :
 
     override val lang = "en"
 
-    override val supportsLatest = false
+    override val supportsLatest = true
 
     private val ddgInterceptor = DdosGuardInterceptor(network.client)
 
@@ -62,7 +62,9 @@ class Rule34Video :
 
     override fun popularAnimeFromElement(element: Element) = SAnime.create().apply {
         setUrlWithoutDomain(element.selectFirst("a.th")!!.attr("href"))
-        title = element.selectFirst("a.th div.thumb_title")!!.text()
+        val baseTitle = element.selectFirst("a.th div.thumb_title")!!.text()
+        val duration = element.selectFirst("span.duration, span.time, div.duration, time, div.time, div.duration_text, div.time_length, span.badge")?.text()?.trim()
+        title = if (!duration.isNullOrEmpty()) "[$duration] $baseTitle" else baseTitle
         thumbnail_url = element.getImageUrl()
     }
 
@@ -84,16 +86,16 @@ class Rule34Video :
         }
     }
 
-    override fun popularAnimeNextPageSelector() = "div.item.pager.next a"
+    override fun popularAnimeNextPageSelector() = "div.item.pager.next a, ul.pagination li.next a, div.pager a.next, a[rel=next]"
 
     // =============================== Latest ===============================
-    override fun latestUpdatesRequest(page: Int) = throw UnsupportedOperationException()
+    override fun latestUpdatesRequest(page: Int) = GET("$baseUrl/latest-updates/$page/")
 
-    override fun latestUpdatesSelector() = throw UnsupportedOperationException()
+    override fun latestUpdatesSelector() = popularAnimeSelector()
 
-    override fun latestUpdatesFromElement(element: Element) = throw UnsupportedOperationException()
+    override fun latestUpdatesFromElement(element: Element) = popularAnimeFromElement(element)
 
-    override fun latestUpdatesNextPageSelector() = throw UnsupportedOperationException()
+    override fun latestUpdatesNextPageSelector() = popularAnimeNextPageSelector()
 
     // =============================== Search ===============================
     private inline fun <reified R> AnimeFilterList.getUriPart() = (find { it is R } as? UriPartFilter)?.toUriPart() ?: ""

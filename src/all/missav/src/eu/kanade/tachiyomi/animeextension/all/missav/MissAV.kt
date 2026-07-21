@@ -142,9 +142,12 @@ class MissAV :
             }
             val titleText = link.text().ifBlank { link.attr("alt") }.trim()
             if (titleText.isBlank()) return@mapNotNull null
+            val duration = element.selectFirst("span[class*=duration], span[class*=time], div[class*=duration], time, span.font-mono")
+                ?.text()?.trim()
+                ?.takeIf { it.contains(":") }
             SAnime.create().apply {
                 setUrlWithoutDomain(href)
-                title = titleText
+                title = if (!duration.isNullOrBlank()) "[$duration] $titleText" else titleText
                 thumbnail_url = element.selectFirst("img[data-src]")?.attr("abs:data-src")
                     ?: element.selectFirst("img[data-original]")?.attr("abs:data-original")
                     ?: element.selectFirst("img[data-lazy-src]")?.attr("abs:data-lazy-src")
@@ -153,7 +156,7 @@ class MissAV :
             }
         }
 
-        val hasNextPage = document.selectFirst("a[rel=next], a[aria-label*=Next], a.next, div.pagination a.next, div.pagination span.current + a") != null
+        val hasNextPage = document.selectFirst("a[rel=next], a[aria-label*=Next], a.next, div.pagination a.next, div.pagination span.current + a, button[aria-label*=Next]") != null
         return AnimesPage(entries, hasNextPage)
     }
 

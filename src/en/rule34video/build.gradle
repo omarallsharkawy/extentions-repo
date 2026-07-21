@@ -1,8 +1,8 @@
 ext {
     extName = 'Rule34Video'
     extClass = '.Rule34Video'
-    extVersionCode = 18
-    overrideVersionCode = 18
+    extVersionCode = 21
+    overrideVersionCode = 21
     isNsfw = true
 }
 

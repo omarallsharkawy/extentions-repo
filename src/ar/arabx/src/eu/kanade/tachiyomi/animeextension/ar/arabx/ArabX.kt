@@ -58,12 +58,20 @@ class ArabX :
     override fun popularAnimeFromElement(element: Element): SAnime = SAnime.create().apply {
         val link = element.selectFirst("a[href]")
         setUrlWithoutDomain(link?.attr("abs:href").orEmpty())
-        title = link?.attr("title")?.ifBlank { null }
-            ?: element.selectFirst("strong.title")?.text().orEmpty()
+        val rawTitle = link?.attr("title")?.ifBlank { null }
+            ?: element.selectFirst("strong.title")?.text()?.trim().orEmpty()
+        val duration = element.selectFirst(
+            "div.duration, span.duration, div.time, span.time, span.clock, time, div.timevideo1, span.label",
+        )?.text()?.trim()?.ifBlank { null }
+        title = if (!duration.isNullOrEmpty() && !rawTitle.contains(duration)) {
+            "[$duration] $rawTitle"
+        } else {
+            rawTitle
+        }
         thumbnail_url = element.selectFirst("img.thumb, img")?.getImageUrl()
     }
 
-    override fun popularAnimeNextPageSelector(): String = "div.pagination li.next a, div.pagination li.page a"
+    override fun popularAnimeNextPageSelector(): String = "div.pagination li.next a, a[rel=next], div.pagination a.next"
 
     override fun popularAnimeParse(response: Response): AnimesPage {
         val document = response.asJsoup()
@@ -96,13 +104,27 @@ class ArabX :
         val tag = filters.firstInstanceOrNull<TagFilter>()?.state?.trim().orEmpty()
         val model = filters.firstInstanceOrNull<ModelFilter>()?.state?.trim().orEmpty()
 
-        val term = query.trim()
+        val rawTerm = query.trim()
+        val term = buildString {
+            append(rawTerm)
+            if (tag.isNotEmpty()) {
+                if (isNotEmpty()) append(" ")
+                append(tag)
+            }
+            if (model.isNotEmpty()) {
+                if (isNotEmpty()) append(" ")
+                append(model)
+            }
+        }
 
         // Text search: path page 1, KVS async block for further pages
         if (term.isNotEmpty()) {
             val slug = encodePathSegment(term)
             if (page <= 1) {
-                return GET("$baseUrl/search/$slug/", headers)
+                val url = "$baseUrl/search/$slug/".toHttpUrl().newBuilder().apply {
+                    if (sort.isNotEmpty()) addQueryParameter("sort_by", sort)
+                }.build()
+                return GET(url, headers)
             }
             val url = "$baseUrl/search/$slug/".toHttpUrl().newBuilder()
                 .addQueryParameter("mode", "async")
@@ -111,6 +133,9 @@ class ArabX :
                 .addQueryParameter("q", term)
                 .addQueryParameter("from_videos", page.toString())
                 .addQueryParameter("from_albums", page.toString())
+                .apply {
+                    if (sort.isNotEmpty()) addQueryParameter("sort_by", sort)
+                }
                 .build()
             return GET(url, headers)
         }

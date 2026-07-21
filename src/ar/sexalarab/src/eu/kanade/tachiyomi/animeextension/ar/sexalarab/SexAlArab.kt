@@ -59,13 +59,27 @@ class SexAlArab :
 
     override fun popularAnimeFromElement(element: Element): SAnime = SAnime.create().apply {
         setUrlWithoutDomain(element.attr("abs:href"))
-        title = element.attr("title").ifBlank {
+        val rawTitle = element.attr("title").ifBlank {
             element.selectFirst("strong.title")?.text().orEmpty()
         }.trim()
+        val duration = element.extractDuration()
+        title = if (!duration.isNullOrBlank() && !rawTitle.contains(duration)) {
+            "[$duration] $rawTitle"
+        } else {
+            rawTitle
+        }
         thumbnail_url = element.selectFirst("img.thumb, img")?.getImageUrl()
     }
 
-    override fun popularAnimeNextPageSelector(): String = "div.pagination li.page a, div.pagination li.next a"
+    private fun Element.extractDuration(): String? {
+        val target = selectFirst("span.duration, span.time, div.duration, span.clock, time, .duration, .time, .video-duration")
+            ?: parent()?.selectFirst("span.duration, span.time, div.duration, span.clock, time, .duration, .time, .video-duration")
+        val text = target?.text()?.trim().orEmpty()
+        if (text.isBlank()) return null
+        return text.replace(Regex("""^[^\d]+"""), "").trim().ifBlank { text }
+    }
+
+    override fun popularAnimeNextPageSelector(): String = "div.pagination li.current + li a, div.pagination li.active + li a, div.pagination li.next a, div.pagination a.next, div.pagination span.current + a, div.pagination li.page a"
 
     override fun popularAnimeParse(response: Response): AnimesPage {
         val document = response.asJsoup()
@@ -96,18 +110,33 @@ class SexAlArab :
         val category = filters.firstInstanceOrNull<CategoryFilter>()?.selected.orEmpty()
         val tag = filters.firstInstanceOrNull<TagFilter>()?.state?.trim().orEmpty()
 
-        // Priority: typed query → tag → category → sort-only listing → popular
-        return when {
-            query.isNotBlank() -> {
-                val url = "$baseUrl/search/".toHttpUrl().newBuilder()
-                    .addQueryParameter("q", query.trim())
-                    .apply {
-                        if (page > 1) addQueryParameter("from_videos", page.toString())
+        if (query.isNotBlank()) {
+            val url = "$baseUrl/search/".toHttpUrl().newBuilder()
+                .addQueryParameter("q", query.trim())
+                .apply {
+                    if (category.isNotBlank()) {
+                        val catSlug = category.removePrefix("category/").trim('/')
+                        addQueryParameter("category", catSlug)
                     }
-                    .build()
-                GET(url, headers)
-            }
+                    if (tag.isNotBlank()) {
+                        addQueryParameter("tag", slugify(tag))
+                    }
+                    if (sort.isNotBlank()) {
+                        val sortBy = when (sort) {
+                            "latest-updates" -> "post_date"
+                            "most-popular" -> "video_viewed"
+                            "top-rated" -> "rating"
+                            else -> sort
+                        }
+                        addQueryParameter("sort_by", sortBy)
+                    }
+                    if (page > 1) addQueryParameter("from_videos", page.toString())
+                }
+                .build()
+            return GET(url, headers)
+        }
 
+        return when {
             tag.isNotBlank() -> {
                 val slug = slugify(tag)
                 val path = if (page <= 1) "/tags/$slug/" else "/tags/$slug/$page/"
@@ -275,8 +304,6 @@ class SexAlArab :
     // =============================== Filters ==============================
 
     override fun getFilterList(): AnimeFilterList = AnimeFilterList(
-        AnimeFilter.Header("Ignored when text query is set (except combined sort N/A)"),
-        AnimeFilter.Header("Priority: Query → Tag → Category → Sort → Popular"),
         SortFilter(),
         CategoryFilter(),
         TagFilter(),

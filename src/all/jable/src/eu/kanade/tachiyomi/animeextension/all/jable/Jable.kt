@@ -84,10 +84,14 @@ class Jable(override val lang: String) : AnimeHttpSource() {
                         }
                     }
                 }.let { url -> if (url.startsWith("//")) "https:$url" else url }
-                title = it.select(".detail .title").text()
+                val rawTitle = it.select(".detail .title").text()
+                val duration = it.selectFirst("span.duration, span.label, span.time, div.duration, time, span.badge, .img-box span")
+                    ?.text()?.trim()
+                    ?.takeIf { d -> d.contains(":") }
+                title = if (!duration.isNullOrBlank()) "[$duration] $rawTitle" else rawTitle
             }
         }
-        val hasNextPage = items.isNotEmpty() && doc.select(".pagination li.active + li:not(.disabled)").isNotEmpty()
+        val hasNextPage = items.isNotEmpty() && doc.select(".pagination li.active + li:not(.disabled), .pagination a.next, a[rel=next], .pagination li a[aria-label*=Next], .pagination a:contains(›)").isNotEmpty()
         return AnimesPage(items, hasNextPage)
     }
 
@@ -135,6 +139,12 @@ class Jable(override val lang: String) : AnimeHttpSource() {
                 is SortFilter -> {
                     if (it.selected.second.isNotEmpty()) {
                         urlBuilder.addQueryParameter("sort_by", it.selected.second)
+                    }
+                }
+
+                is TagFilter -> {
+                    if (query.isNotEmpty() && it.selected.second.isNotEmpty()) {
+                        urlBuilder.addQueryParameter("tag", it.selected.second.substringAfterLast('/'))
                     }
                 }
 

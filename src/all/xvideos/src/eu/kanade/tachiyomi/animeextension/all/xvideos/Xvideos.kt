@@ -85,11 +85,19 @@ class Xvideos :
             ?.attr("href")
             .orEmpty()
         anime.setUrlWithoutDomain(absUrl(href))
-        anime.title = element.selectFirst("div.title")?.attr("title")?.ifBlank { null }
+        val rawTitle = element.selectFirst("div.title")?.attr("title")?.ifBlank { null }
             ?: element.selectFirst("div.title a, p.title a")?.attr("title")?.ifBlank { null }
             ?: element.selectFirst("div.title a, p.title a, p.title")?.text().orEmpty()
                 .replace(Regex("""\s+\d+\s*min\s*$"""), "")
                 .trim()
+        val duration = element.selectFirst("span.duration, span.metadata, p.metadata, div.metadata")?.text()?.let { text ->
+            Regex("""\b(\d+:\d+|\d+\s*min)\b""", RegexOption.IGNORE_CASE).find(text)?.value
+        }?.trim().orEmpty()
+        anime.title = if (duration.isNotBlank() && !rawTitle.contains(duration)) {
+            "[$duration] $rawTitle"
+        } else {
+            rawTitle
+        }
         val img = element.selectFirst("div.thumb img, img")
         val rawThumb = img?.attr("data-src")?.ifBlank { null }
             ?: img?.attr("data-original")?.ifBlank { null }
@@ -100,9 +108,10 @@ class Xvideos :
         return anime
     }
 
-    override fun popularAnimeNextPageSelector(): String = "a.next-page, a.no-page.next-page, div.pagination a.next, " +
-        "a.dir.next, div.pagination .current + a, div.pagination li.current + li a, " +
-        "a.pagination-next, a.page-next, .pagination a[rel=next], a[rel=next]"
+    override fun popularAnimeNextPageSelector(): String = "a.next-page:not(.disabled), a.no-page.next-page:not(.disabled), " +
+        "div.pagination a.next:not(.disabled), a.dir.next:not(.disabled), div.pagination .current + a, " +
+        "div.pagination li.current + li a, a.pagination-next:not(.disabled), a.page-next:not(.disabled), " +
+        ".pagination a[rel=next]:not(.disabled), a[rel=next]:not(.disabled)"
 
     override fun popularAnimeParse(response: Response): AnimesPage {
         val document = response.asJsoup()
@@ -140,7 +149,20 @@ class Xvideos :
 
         return when {
             query.isNotBlank() -> {
-                searchUrl(query.trim(), pageIndex, sort, datef, durf, quality, typef = null)
+                val combinedQuery = buildString {
+                    append(query.trim())
+                    if (category.isNotBlank()) {
+                        val catName = category.substringBeforeLast("-").replace("_", " ")
+                        append(" ").append(catName)
+                    }
+                    if (tag.isNotBlank()) {
+                        append(" ").append(tag.trim())
+                    }
+                    if (brand.isNotBlank()) {
+                        append(" ").append(brand.trim())
+                    }
+                }
+                searchUrl(combinedQuery, pageIndex, sort, datef, durf, quality, typef = null)
             }
 
             brand.isNotBlank() -> {

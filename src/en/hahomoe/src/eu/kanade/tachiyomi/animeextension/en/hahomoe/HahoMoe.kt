@@ -49,7 +49,9 @@ class HahoMoe :
 
     override fun popularAnimeFromElement(element: Element) = SAnime.create().apply {
         setUrlWithoutDomain(element.attr("href") + "?s=srt-d")
-        title = element.selectFirst("div.label > span, div span.thumb-title")!!.text()
+        val baseTitle = element.selectFirst("div.label > span, div span.thumb-title")!!.text()
+        val duration = element.selectFirst("span.duration, span.time, div.duration, time, span.badge, div.badge, div.time")?.text()?.trim()
+        title = if (!duration.isNullOrEmpty()) "[$duration] $baseTitle" else baseTitle
         thumbnail_url = element.getImageUrl()
     }
 
@@ -71,7 +73,7 @@ class HahoMoe :
         }
     }
 
-    override fun popularAnimeNextPageSelector() = "ul.pagination li.page-item a[rel=next]"
+    override fun popularAnimeNextPageSelector() = "ul.pagination li.page-item a[rel=next], ul.pagination a[rel=next], a.page-link[rel=next]"
 
     // =============================== Latest ===============================
     override fun latestUpdatesRequest(page: Int) = GET("$baseUrl/anime?s=rel-d&page=$page")
@@ -91,10 +93,12 @@ class HahoMoe :
         val httpQuery = buildString {
             if (query.isNotBlank()) append(query.trim())
             if (includedTags.isNotEmpty()) {
-                append(includedTags.joinToString(" genre:", prefix = " genre:"))
+                if (isNotEmpty()) append(" ")
+                append(includedTags.joinToString(" genre:", prefix = "genre:"))
             }
             if (excludedTags.isNotEmpty()) {
-                append(excludedTags.joinToString(" -genre:", prefix = " -genre:"))
+                if (isNotEmpty()) append(" ")
+                append(excludedTags.joinToString(" -genre:", prefix = "-genre:"))
             }
         }.let { URLEncoder.encode(it, "UTF-8") }
 
