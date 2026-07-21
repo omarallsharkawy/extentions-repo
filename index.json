@@ -331,10 +331,10 @@
   {
     "name": "Aniyomi: PornHub",
     "pkg": "eu.kanade.tachiyomi.animeextension.all.pornhub",
-    "apk": "apk/aniyomi-all.pornhub-v14.4.apk",
+    "apk": "apk/aniyomi-all.pornhub-v14.6.apk",
     "lang": "all",
-    "code": 4,
-    "version": "14.4",
+    "code": 6,
+    "version": "14.6",
     "nsfw": 1,
     "sources": [
       {
@@ -468,10 +468,10 @@
   {
     "name": "Aniyomi: SupJav",
     "pkg": "eu.kanade.tachiyomi.animeextension.all.supjav",
-    "apk": "apk/aniyomi-all.supjav-v14.32.apk",
+    "apk": "apk/aniyomi-all.supjav-v14.33.apk",
     "lang": "all",
-    "code": 32,
-    "version": "14.32",
+    "code": 33,
+    "version": "14.33",
     "nsfw": 1,
     "sources": [
       {
@@ -519,10 +519,10 @@
   {
     "name": "Aniyomi: Xnxx",
     "pkg": "eu.kanade.tachiyomi.animeextension.all.xnxx",
-    "apk": "apk/aniyomi-all.xnxx-v14.9.apk",
+    "apk": "apk/aniyomi-all.xnxx-v14.10.apk",
     "lang": "all",
-    "code": 9,
-    "version": "14.9",
+    "code": 10,
+    "version": "14.10",
     "nsfw": 1,
     "sources": [
       {
@@ -536,10 +536,10 @@
   {
     "name": "Aniyomi: Xvideos",
     "pkg": "eu.kanade.tachiyomi.animeextension.all.xvideos",
-    "apk": "apk/aniyomi-all.xvideos-v14.10.apk",
+    "apk": "apk/aniyomi-all.xvideos-v14.11.apk",
     "lang": "all",
-    "code": 10,
-    "version": "14.10",
+    "code": 11,
+    "version": "14.11",
     "nsfw": 1,
     "sources": [
       {

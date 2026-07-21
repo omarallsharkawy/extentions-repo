@@ -7,6 +7,7 @@ import aniyomi.lib.streamtapeextractor.StreamTapeExtractor
 import aniyomi.lib.streamwishextractor.StreamWishExtractor
 import aniyomi.lib.voeextractor.VoeExtractor
 import eu.kanade.tachiyomi.animesource.ConfigurableAnimeSource
+import eu.kanade.tachiyomi.animesource.model.AnimeFilter
 import eu.kanade.tachiyomi.animesource.model.AnimeFilterList
 import eu.kanade.tachiyomi.animesource.model.AnimesPage
 import eu.kanade.tachiyomi.animesource.model.SAnime
@@ -38,7 +39,7 @@ class SupJav(override val lang: String = "en") :
 
     override val baseUrl = "https://supjav.com"
 
-    override val supportsLatest = false
+    override val supportsLatest = true
 
     override fun headersBuilder() = super.headersBuilder()
         .set("Referer", "$baseUrl/")
@@ -52,29 +53,46 @@ class SupJav(override val lang: String = "en") :
     private val preferences by getPreferencesLazy()
 
     // ============================== Popular ===============================
-    override fun popularAnimeRequest(page: Int) = GET("$baseUrl$langPath/popular/page/$page", headers)
+    override fun popularAnimeRequest(page: Int): Request {
+        val url = if (page > 1) {
+            "$baseUrl$langPath/popular/page/$page"
+        } else {
+            "$baseUrl$langPath/popular"
+        }
+        return GET(url, headers)
+    }
 
     override fun popularAnimeSelector() = "div.posts > div.post > a"
 
     override fun popularAnimeFromElement(element: Element) = SAnime.create().apply {
         setUrlWithoutDomain(element.attr("href"))
 
-        element.selectFirst("img")!!.run {
+        element.selectFirst("img")?.run {
             title = attr("alt")
             thumbnail_url = absUrl("data-original").ifBlank { absUrl("src") }
         }
     }
 
-    override fun popularAnimeNextPageSelector() = "div.pagination a.next, div.pagination li.active:not(:nth-last-child(2)), div.pagination li.active + li, div.pagination li:has(.current) + li, div.pagination span.current + a"
+    override fun popularAnimeNextPageSelector() = "div.pagination a.next, div.pagination a.next.page-numbers, div.pagination a[rel=next], " +
+        "div.pagination span.current + a, div.pagination span.page-numbers.current + a, div.pagination a.current + a, " +
+        "ul.pagination li.active + li a, nav.pagination a.next, div.nav-links a.next, " +
+        "a.next.page-numbers, a.next, a[rel=next], a[rel=\"next\"]"
 
     // =============================== Latest ===============================
-    override fun latestUpdatesRequest(page: Int): Request = throw UnsupportedOperationException()
+    override fun latestUpdatesRequest(page: Int): Request {
+        val url = if (page > 1) {
+            "$baseUrl$langPath/page/$page"
+        } else {
+            "$baseUrl$langPath/"
+        }
+        return GET(url, headers)
+    }
 
-    override fun latestUpdatesSelector(): String = throw UnsupportedOperationException()
+    override fun latestUpdatesSelector() = popularAnimeSelector()
 
-    override fun latestUpdatesFromElement(element: Element): SAnime = throw UnsupportedOperationException()
+    override fun latestUpdatesFromElement(element: Element) = popularAnimeFromElement(element)
 
-    override fun latestUpdatesNextPageSelector() = throw UnsupportedOperationException()
+    override fun latestUpdatesNextPageSelector() = popularAnimeNextPageSelector()
 
     // =============================== Search ===============================
     override suspend fun getSearchAnime(page: Int, query: String, filters: AnimeFilterList): AnimesPage {
@@ -106,12 +124,80 @@ class SupJav(override val lang: String = "en") :
     }
 
     override fun searchAnimeRequest(page: Int, query: String, filters: AnimeFilterList): Request {
-        val url = if (page > 1) {
-            "$baseUrl$langPath/page/$page/?s=$query"
-        } else {
-            "$baseUrl$langPath/?s=$query"
+        var categorySlug = ""
+        var tagSlug = ""
+        var starSlug = ""
+        var makerSlug = ""
+        var sortOption = 0
+
+        for (filter in filters) {
+            when (filter) {
+                is SortFilter -> sortOption = filter.state
+
+                is CategoryFilter -> categorySlug = CategoryList[filter.state].second
+
+                is TagFilter -> {
+                    if (filter.state > 0) {
+                        tagSlug = TagList[filter.state].second
+                    }
+                }
+
+                is CustomTagFilter -> {
+                    if (filter.state.isNotBlank()) {
+                        tagSlug = filter.state.trim().lowercase()
+                    }
+                }
+
+                is StarFilter -> {
+                    if (filter.state.isNotBlank()) {
+                        starSlug = filter.state.trim().lowercase()
+                    }
+                }
+
+                is MakerFilter -> {
+                    if (filter.state.isNotBlank()) {
+                        makerSlug = filter.state.trim().lowercase()
+                    }
+                }
+
+                else -> {}
+            }
         }
-        return GET(url, headers)
+
+        val basePath = when {
+            starSlug.isNotBlank() -> {
+                if (page > 1) "$baseUrl$langPath/star/$starSlug/page/$page" else "$baseUrl$langPath/star/$starSlug"
+            }
+
+            makerSlug.isNotBlank() -> {
+                if (page > 1) "$baseUrl$langPath/maker/$makerSlug/page/$page" else "$baseUrl$langPath/maker/$makerSlug"
+            }
+
+            tagSlug.isNotBlank() -> {
+                if (page > 1) "$baseUrl$langPath/tag/$tagSlug/page/$page" else "$baseUrl$langPath/tag/$tagSlug"
+            }
+
+            categorySlug.isNotBlank() -> {
+                if (page > 1) "$baseUrl$langPath/category/$categorySlug/page/$page" else "$baseUrl$langPath/category/$categorySlug"
+            }
+
+            else -> {
+                when (sortOption) {
+                    1 -> if (page > 1) "$baseUrl$langPath/popular/page/$page" else "$baseUrl$langPath/popular"
+                    2 -> if (page > 1) "$baseUrl$langPath/popular/today/page/$page" else "$baseUrl$langPath/popular/today"
+                    3 -> if (page > 1) "$baseUrl$langPath/popular/week/page/$page" else "$baseUrl$langPath/popular/week"
+                    4 -> if (page > 1) "$baseUrl$langPath/popular/month/page/$page" else "$baseUrl$langPath/popular/month"
+                    else -> if (page > 1) "$baseUrl$langPath/page/$page" else "$baseUrl$langPath/"
+                }
+            }
+        }
+
+        val urlBuilder = basePath.toHttpUrl().newBuilder()
+        if (query.isNotBlank()) {
+            urlBuilder.addQueryParameter("s", query.trim())
+        }
+
+        return GET(urlBuilder.build(), headers)
     }
 
     override fun searchAnimeSelector() = popularAnimeSelector()
@@ -119,6 +205,40 @@ class SupJav(override val lang: String = "en") :
     override fun searchAnimeFromElement(element: Element) = popularAnimeFromElement(element)
 
     override fun searchAnimeNextPageSelector() = popularAnimeNextPageSelector()
+
+    // ============================= Filters ===============================
+    override fun getFilterList() = AnimeFilterList(
+        SortFilter(),
+        CategoryFilter(),
+        TagFilter(),
+        AnimeFilter.Separator(),
+        AnimeFilter.Header("Custom Search Slugs"),
+        StarFilter(),
+        MakerFilter(),
+        CustomTagFilter(),
+    )
+
+    private class SortFilter :
+        AnimeFilter.Select<String>(
+            "Sort By",
+            arrayOf("Latest", "Popular All Time", "Popular Today", "Popular Week", "Popular Month"),
+        )
+
+    private class CategoryFilter :
+        AnimeFilter.Select<String>(
+            "Category",
+            CategoryList.map { it.first }.toTypedArray(),
+        )
+
+    private class TagFilter :
+        AnimeFilter.Select<String>(
+            "Tag",
+            TagList.map { it.first }.toTypedArray(),
+        )
+
+    private class StarFilter : AnimeFilter.Text("Actress / Star Slug (e.g. yua-mikami)")
+    private class MakerFilter : AnimeFilter.Text("Maker / Studio Slug (e.g. s1-no-1-style)")
+    private class CustomTagFilter : AnimeFilter.Text("Custom Tag Slug")
 
     // =========================== Anime Details ============================
     override fun animeDetailsParse(document: Document) = SAnime.create().apply {
@@ -155,7 +275,6 @@ class SupJav(override val lang: String = "en") :
     override fun videoListParse(response: Response): List<Video> {
         val doc = response.useAsJsoup()
 
-        // Site still uses div.btnst > a.btn-server with reversed data-link tokens.
         val players = doc.select("div.btnst a[data-link], div.btnst > a")
             .mapNotNull { el ->
                 val name = el.ownText().ifBlank { el.text() }.trim().uppercase()
@@ -201,17 +320,12 @@ class SupJav(override val lang: String = "en") :
                 videosFromTurboVid(url)
 
             else -> {
-                // Unknown server label: try TurboVid-style urlPlay, then packed HLS clones.
                 videosFromTurboVid(url)
                     .ifEmpty { videosFromStreamWishLike(url, hoster.ifBlank { host }) }
             }
         }
     }
 
-    /**
-     * Protector still accepts reversed data-link via `?c=` and 302s to the real embed.
-     * Site JS embeds with `?l=` (raw token) for iframe display; scrapers use `?c=`.
-     */
     private suspend fun resolveProtectorRedirect(id: String): String? {
         val response = noRedirectClient
             .newCall(GET("$PROTECTOR_URL/supjav.php?c=$id", protectorHeaders))
@@ -240,11 +354,6 @@ class SupJav(override val lang: String = "en") :
         ).distinctBy { it.videoUrl }
     }
 
-    /**
-     * FST currently resolves to StreamWish-family clones (e.g. fc2stream.tv) whose IDs
-     * are not mirrored on streamwish.com. Prefer the redirected embed page: unpack
-     * packed JWPlayer script and pull the master m3u8.
-     */
     private suspend fun videosFromStreamWishLike(url: String, prefix: String): List<Video> {
         val fromExtractor = streamwishExtractor.videosFromUrl(url) { "$prefix - $it" }
         if (fromExtractor.isNotEmpty()) return fromExtractor
@@ -265,7 +374,6 @@ class SupJav(override val lang: String = "en") :
                 }
             }
             ?: run {
-                // Whole-page fallback if script tags were obfuscated differently.
                 if (body.contains("eval(function(p,a,c")) {
                     val packed = PACKED_REGEX.find(body)?.value
                     packed?.let { JsUnpacker.unpackAndCombine(it) }
@@ -348,5 +456,34 @@ class SupJav(override val lang: String = "en") :
         private const val PREF_QUALITY_TITLE = "Preferred video quality"
         private const val PREF_QUALITY_DEFAULT = "720p"
         private val PREF_QUALITY_ENTRIES = arrayOf("1080p", "720p", "480p", "360p")
+
+        private val CategoryList = listOf(
+            "All" to "",
+            "Censored" to "censored",
+            "Uncensored" to "uncensored",
+            "Amateur" to "amateur",
+            "Reduced Price" to "reduced-price",
+            "English Subtitle" to "english-subtitle",
+            "VR" to "vr",
+            "Chinese Subtitle" to "chinese-subtitle",
+            "MGS" to "mgs",
+            "Maker" to "maker",
+        )
+
+        private val TagList = listOf(
+            "All" to "",
+            "Creampie" to "creampie",
+            "Married Woman" to "married-woman",
+            "Slut" to "slut",
+            "Big Tits" to "big-tits",
+            "Solowork" to "solowork",
+            "Mature Woman" to "mature-woman",
+            "Beautiful Girl" to "beautiful-girl",
+            "High Quality" to "high-quality-to-see-hd",
+            "Subtitled" to "subtitled",
+            "Mosaic Removed" to "mosaic-removed",
+            "Censored" to "censored",
+            "Uncensored" to "uncensored",
+        )
     }
 }

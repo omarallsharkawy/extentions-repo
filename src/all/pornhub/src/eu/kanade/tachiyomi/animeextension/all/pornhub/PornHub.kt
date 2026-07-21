@@ -141,6 +141,7 @@ class PornHub :
                     brand.startsWith("channels/", ignoreCase = true) ||
                     brand.startsWith("channel/", ignoreCase = true) -> brand.trim('/').lowercase()
                     .replaceFirst(Regex("^channel/"), "channels/")
+
                 else -> "channels/$slug"
             }
             val url = baseUrl.toHttpUrl().newBuilder()
@@ -480,6 +481,7 @@ class PornHub :
         when {
             duration.startsWith("min:") ->
                 addQueryParameter("min_duration", duration.removePrefix("min:"))
+
             duration.startsWith("max:") ->
                 addQueryParameter("max_duration", duration.removePrefix("max:"))
         }
@@ -487,11 +489,19 @@ class PornHub :
 
     /** Channel/model pages use different sort tokens than /video. */
     private fun channelSort(sort: String): String = when (sort) {
-        "cm", "mr" -> "da" // most recent
-        "tr" -> "ra" // top rated
-        "mv" -> "vi" // most viewed
+        "cm", "mr" -> "da"
+
+        // most recent
+        "tr" -> "ra"
+
+        // top rated
+        "mv" -> "vi"
+
+        // most viewed
         "lg" -> "lg"
+
         "ht" -> "da"
+
         else -> "da"
     }
 
@@ -518,6 +528,7 @@ class PornHub :
         return when {
             def.isHls() || rawUrl.contains(".m3u8") ->
                 extractHlsSafe(rawUrl, qualityHint = qualityLabel, namePrefix = namePrefix)
+
             rawUrl.contains(".mp4") || def.format.equals("mp4", ignoreCase = true) ->
                 listOf(
                     Video(
@@ -527,6 +538,7 @@ class PornHub :
                         videoHeaders,
                     ),
                 )
+
             else -> emptyList()
         }
     }
@@ -638,7 +650,9 @@ class PornHub :
             }
             when (c) {
                 '"' -> inString = true
+
                 open -> depth++
+
                 close -> {
                     depth--
                     if (depth == 0) return source.substring(start, i + 1)
@@ -687,6 +701,7 @@ class PornHub :
                     q.contentOrNull
                         ?.takeIf { it.isNotBlank() && it != "null" }
                         ?.let { if (it.endsWith("p")) it else "${it}p" }
+
                 is JsonArray -> {
                     // Non-empty quality arrays are rare; take first scalar entry if present.
                     q.firstOrNull()
@@ -696,6 +711,7 @@ class PornHub :
                         ?.takeIf { it.isNotBlank() && it != "null" }
                         ?.let { if (it.endsWith("p")) it else "${it}p" }
                 }
+
                 else -> null
             }
             return fromQuality ?: fromHeight ?: ""
