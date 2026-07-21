@@ -523,7 +523,7 @@ class SupJav(override val lang: String = "en") :
         }.getOrDefault(emptyList())
     }
 
-    private val playlistUtils by lazy { PlaylistUtils(client, headers) }
+    private val playlistUtils by lazy { PlaylistUtils(client) }
     private val streamtapeExtractor by lazy { StreamTapeExtractor(client) }
     private val streamwishExtractor by lazy { StreamWishExtractor(client, headers) }
     private val voeExtractor by lazy { VoeExtractor(client, headers) }
@@ -588,6 +588,42 @@ class SupJav(override val lang: String = "en") :
             .build()
     }
 
+    private fun cleanMediaHeaders(customHeaders: Headers?, fallbackUrl: String): Headers {
+        val baseHeaders = customHeaders ?: buildMediaHeaders(fallbackUrl)
+        val builder = baseHeaders.newBuilder()
+
+        builder.removeAll("Sec-Fetch-Dest")
+        builder.removeAll("Sec-Fetch-Mode")
+        builder.removeAll("Sec-Fetch-Site")
+        builder.removeAll("Sec-Fetch-User")
+        builder.removeAll("Upgrade-Insecure-Requests")
+
+        builder.set("User-Agent", headers["User-Agent"] ?: DEFAULT_USER_AGENT)
+
+        val accept = baseHeaders["Accept"]
+        if (accept == null || accept.contains("text/html")) {
+            builder.set("Accept", "*/*")
+        }
+
+        val fallbackHttpUrl = fallbackUrl.toHttpUrlOrNull()
+        val fallbackOrigin = fallbackHttpUrl?.let { "${it.scheme}://${it.host}" }
+        val fallbackReferer = fallbackHttpUrl?.toString() ?: fallbackUrl
+
+        val currentReferer = baseHeaders["Referer"]
+        if (currentReferer.isNullOrBlank() || currentReferer.contains("supjav.com")) {
+            builder.set("Referer", fallbackReferer)
+        }
+
+        val currentOrigin = baseHeaders["Origin"]
+        if (currentOrigin.isNullOrBlank() || currentOrigin.contains("supjav.com")) {
+            if (fallbackOrigin != null) {
+                builder.set("Origin", fallbackOrigin)
+            }
+        }
+
+        return builder.build()
+    }
+
     private suspend fun videosFromPlayer(player: Pair<String, String>): List<Video> {
         val (rawHosterName, rawLink) = player
         val url = resolveProtectorRedirect(rawLink) ?: return emptyList()
@@ -634,13 +670,8 @@ class SupJav(override val lang: String = "en") :
             }
 
             rawVideos.map { video ->
-                val vHeaders = video.headers
-                if (vHeaders == null || vHeaders.get("Sec-Fetch-Dest") == "document" || vHeaders.get("Origin")?.contains("supjav.com") == true) {
-                    val refererForVid = video.videoUrl?.toHttpUrlOrNull()?.let { "${it.scheme}://${it.host}/" } ?: url
-                    video.copy(headers = buildMediaHeaders(refererForVid))
-                } else {
-                    video
-                }
+                val refererForVid = video.videoUrl?.toHttpUrlOrNull()?.let { "${it.scheme}://${it.host}/" } ?: url
+                video.copy(headers = cleanMediaHeaders(video.headers, refererForVid))
             }
         }.getOrDefault(emptyList())
     }

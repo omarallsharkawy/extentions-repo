@@ -296,6 +296,7 @@ class CloudflareInterceptor(
             )
             addAll(matching)
         }
+        if (merged.isEmpty()) return request
         return request.newBuilder()
             .header("Cookie", merged.joinToString("; ") { "${it.name}=${it.value}" })
             .build()
@@ -305,12 +306,10 @@ class CloudflareInterceptor(
         val code = response.code
         val server = response.header("Server")
         val mitigated = response.header("cf-mitigated")
+        val hasCfRay = response.header("cf-ray") != null
         val isError = code in ERROR_CODES
-        val isCfServer = server in SERVER_CHECK
-        // Legacy / nginx marker: code in {403,503} AND Server: cloudflare[-nginx]
-        if (isError && isCfServer) return true
-        // Modern CF managed challenge: returns 403 with `cf-mitigated: challenge`
-        // even when Server isn't exactly "cloudflare-nginx"
+        val isCfServer = server?.lowercase()?.contains("cloudflare") == true
+        if (isError && (isCfServer || hasCfRay)) return true
         if (isError && mitigated.equals("challenge", ignoreCase = true)) return true
         return false
     }
@@ -326,7 +325,7 @@ class CloudflareInterceptor(
     companion object {
         private const val TAG = "CloudflareInterceptor"
 
-        private val ERROR_CODES = listOf(403, 503)
+        private val ERROR_CODES = listOf(403, 503, 429)
         private val SERVER_CHECK = arrayOf("cloudflare-nginx", "cloudflare")
 
         /**
@@ -429,14 +428,17 @@ internal class CloudflareCookieCache {
     private val store = ConcurrentHashMap<String, HostEntry>()
 
     fun put(url: HttpUrl, cookies: List<Cookie>) {
-        val nonSession = cookies.filter { it.persistent }
-        if (nonSession.isEmpty()) return
-        store[url.host] = HostEntry(nonSession, System.currentTimeMillis())
+        if (cookies.isEmpty()) return
+        store[url.host] = HostEntry(cookies, System.currentTimeMillis())
     }
 
     fun getMatching(url: HttpUrl): List<Cookie>? {
         val entry = store[url.host] ?: return null
         val now = System.currentTimeMillis()
+        if (now - entry.storedAt > DEFAULT_TTL_MILLIS) {
+            store.remove(url.host)
+            return null
+        }
         val valid = entry.cookies.filter { it.expiresAt > now }
         if (valid.isEmpty()) {
             store.remove(url.host)
