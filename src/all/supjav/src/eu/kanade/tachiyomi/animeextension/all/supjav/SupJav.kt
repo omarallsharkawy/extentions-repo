@@ -394,14 +394,21 @@ class SupJav(override val lang: String = "en") :
     override fun videoListParse(response: Response): List<Video> {
         val doc = response.useAsJsoup()
 
-        val players = doc.select("div.btnst a[data-link], div.btnst > a, div.btns a[data-link], div.btns > a")
-            .mapNotNull { el ->
-                val name = el.ownText().ifBlank { el.text() }.trim().uppercase()
-                val rawLink = el.attr("data-link").ifBlank { el.attr("href") }.trim()
-                if (name.isEmpty() || rawLink.isEmpty() || rawLink.startsWith("javascript")) return@mapNotNull null
-                name to rawLink
-            }
-            .distinctBy { it.second }
+        val playerElements = doc.select(
+            "div.btnst a[data-link], div.btnst > a, div.btns a[data-link], div.btns > a, " +
+                "a.btn-server, a[data-link], ul.nav-tabs a",
+        )
+
+        val players = playerElements.mapNotNull { el ->
+            val name = el.ownText().ifBlank { el.text() }.trim().uppercase()
+            val rawLink = el.attr("data-link")
+                .ifBlank { el.attr("data-url") }
+                .ifBlank { el.attr("data-src") }
+                .ifBlank { el.attr("href") }
+                .trim()
+            if (name.isEmpty() || rawLink.isEmpty() || rawLink.startsWith("javascript")) return@mapNotNull null
+            name to rawLink
+        }.distinctBy { it.second }
 
         val videoList = players.parallelCatchingFlatMapBlocking(::videosFromPlayer)
         if (videoList.isNotEmpty()) return videoList
@@ -427,7 +434,12 @@ class SupJav(override val lang: String = "en") :
     private val vidhideExtractor by lazy { VidHideExtractor(client, headers) }
 
     private val protectorHeaders by lazy {
-        super.headersBuilder().set("Referer", "$PROTECTOR_URL/").build()
+        super.headersBuilder()
+            .set("Referer", "$baseUrl/")
+            .set("Origin", baseUrl)
+            .set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36")
+            .set("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
+            .build()
     }
 
     private val noRedirectClient by lazy {
@@ -449,7 +461,8 @@ class SupJav(override val lang: String = "en") :
                     voeExtractor.videosFromUrl(url, prefix = "VOE ")
 
                 hoster == "DS" || hoster == "DOOD" || host.contains("dood") ||
-                    host.contains("ds2play") || host.contains("doodstream") ->
+                    host.contains("ds2play") || host.contains("doodstream") ||
+                    host.contains("dood.to") || host.contains("dood.so") || host.contains("ds2video") ->
                     doodExtractor.videosFromUrl(url)
 
                 hoster == "MD" || hoster == "MIXDROP" || host.contains("mixdrop") ->
@@ -470,35 +483,95 @@ class SupJav(override val lang: String = "en") :
                 else -> {
                     videosFromTurboVid(url)
                         .ifEmpty { videosFromStreamWishLike(url, hoster.ifBlank { host }) }
+                        .ifEmpty { videosFromGenericEmbed(url, hoster) }
                 }
             }
         }.getOrDefault(emptyList())
     }
 
     private suspend fun resolveProtectorRedirect(rawLink: String): String? {
-        if (rawLink.startsWith("http://") || rawLink.startsWith("https://")) {
-            return rawLink
+        val cleanRaw = rawLink.trim()
+        if (cleanRaw.isBlank()) return null
+        if (cleanRaw.startsWith("http://") || cleanRaw.startsWith("https://")) {
+            return cleanRaw
         }
-        if (rawLink.startsWith("//")) {
-            return "https:$rawLink"
+        if (cleanRaw.startsWith("//")) {
+            return "https:$cleanRaw"
         }
 
-        val reversedId = rawLink.reversed()
-        val resReversed = fetchProtectorLocation(reversedId)
-        if (resReversed != null) return resReversed
+        val decoded = runCatching {
+            String(android.util.Base64.decode(cleanRaw, android.util.Base64.DEFAULT), Charsets.UTF_8).trim()
+        }.getOrNull()
+        if (decoded != null && (decoded.startsWith("http://") || decoded.startsWith("https://"))) {
+            return decoded
+        }
 
-        return fetchProtectorLocation(rawLink)
+        val decodedRev = runCatching {
+            String(android.util.Base64.decode(cleanRaw.reversed(), android.util.Base64.DEFAULT), Charsets.UTF_8).trim()
+        }.getOrNull()
+        if (decodedRev != null && (decodedRev.startsWith("http://") || decodedRev.startsWith("https://"))) {
+            return decodedRev
+        }
+
+        val hosts = listOf("https://lk1.supremejav.com", "https://supjav.com")
+        val params = listOf("c", "l")
+        val ids = listOf(cleanRaw, cleanRaw.reversed()).distinct()
+
+        for (host in hosts) {
+            for (param in params) {
+                for (id in ids) {
+                    val targetUrl = "$host/supjav.php?$param=$id"
+                    val location = fetchProtectorLocation(targetUrl)
+                    if (!location.isNullOrBlank()) {
+                        return location
+                    }
+                }
+            }
+        }
+        return null
     }
 
-    private suspend fun fetchProtectorLocation(id: String): String? = runCatching {
-        noRedirectClient
-            .newCall(GET("$PROTECTOR_URL/supjav.php?c=$id", protectorHeaders))
-            .await()
-            .use { resp ->
-                (resp.header("location") ?: resp.header("Location"))
-                    ?.trim()
-                    ?.takeIf { it.startsWith("http") }
+    private suspend fun fetchProtectorLocation(targetUrl: String): String? = runCatching {
+        val req = GET(targetUrl, protectorHeaders)
+        noRedirectClient.newCall(req).await().use { resp ->
+            val loc = (resp.header("location") ?: resp.header("Location"))?.trim()
+            if (!loc.isNullOrEmpty()) {
+                return@use when {
+                    loc.startsWith("http") -> loc
+
+                    loc.startsWith("//") -> "https:$loc"
+
+                    loc.startsWith("/") -> {
+                        val httpUrl = targetUrl.toHttpUrlOrNull()
+                        if (httpUrl != null) "${httpUrl.scheme}://${httpUrl.host}$loc" else null
+                    }
+
+                    else -> null
+                }
             }
+
+            if (resp.isSuccessful) {
+                val body = resp.bodyString()
+                if (body.isNotBlank()) {
+                    val doc = Jsoup.parse(body, targetUrl)
+                    val iframeSrc = doc.selectFirst("iframe[src], iframe[data-src]")?.let {
+                        it.attr("data-src").ifBlank { it.attr("src") }
+                    }?.trim()
+                    if (!iframeSrc.isNullOrEmpty() && (iframeSrc.startsWith("http") || iframeSrc.startsWith("//"))) {
+                        return@use if (iframeSrc.startsWith("//")) "https:$iframeSrc" else iframeSrc
+                    }
+
+                    val jsLoc = Regex("""(?:window\.|location\.)(?:href|replace)\s*=\s*["'](https?://[^"']+)["']""")
+                        .find(body)?.groupValues?.get(1)
+                    if (!jsLoc.isNullOrEmpty()) return@use jsLoc
+
+                    val metaRef = doc.selectFirst("meta[http-equiv=refresh]")?.attr("content")
+                    val metaUrl = metaRef?.let { Regex("""url=(https?://[^\s"']+)""", RegexOption.IGNORE_CASE).find(it)?.groupValues?.get(1) }
+                    if (!metaUrl.isNullOrEmpty()) return@use metaUrl
+                }
+            }
+            null
+        }
     }.getOrNull()
 
     private suspend fun videosFromTurboVid(url: String): List<Video> {
@@ -577,6 +650,49 @@ class SupJav(override val lang: String = "en") :
         return videos.distinctBy { it.videoUrl }
     }
 
+    private suspend fun videosFromGenericEmbed(url: String, hoster: String): List<Video> {
+        val cleanUrl = url.trim()
+        if (!cleanUrl.startsWith("http")) return emptyList()
+
+        if (cleanUrl.contains(".m3u8", ignoreCase = true)) {
+            return runCatching {
+                playlistUtils.extractFromHls(
+                    cleanUrl,
+                    referer = url,
+                    videoNameGen = { "$hoster - $it" },
+                )
+            }.getOrDefault(emptyList())
+        }
+
+        return runCatching {
+            val body = client.newCall(GET(cleanUrl, headers)).awaitSuccess().bodyString()
+            val m3u8Urls = M3U8_REGEX.findAll(body).map { it.value }.toList()
+            val videos = mutableListOf<Video>()
+            for (m3u8 in m3u8Urls) {
+                val extracted = runCatching {
+                    playlistUtils.extractFromHls(
+                        m3u8,
+                        referer = cleanUrl,
+                        videoNameGen = { "$hoster - $it" },
+                    )
+                }.getOrDefault(emptyList())
+                videos.addAll(extracted)
+                if (videos.isNotEmpty()) break
+            }
+            if (videos.isNotEmpty()) return@runCatching videos
+
+            val doc = Jsoup.parse(body, cleanUrl)
+            val subIframe = doc.selectFirst("iframe[src], iframe[data-src]")?.let {
+                it.attr("data-src").ifBlank { it.attr("src") }
+            }
+            if (!subIframe.isNullOrEmpty() && subIframe != cleanUrl) {
+                val absSub = if (subIframe.startsWith("//")) "https:$subIframe" else subIframe
+                return@runCatching videosFromPlayer(hoster to absSub)
+            }
+            emptyList()
+        }.getOrDefault(emptyList())
+    }
+
     private fun isStreamWishLikeHost(host: String): Boolean = host.contains("fc2stream") ||
         host.contains("streamwish") ||
         host.contains("streamhg") ||
@@ -585,13 +701,19 @@ class SupJav(override val lang: String = "en") :
         host.contains("wish") ||
         host.contains("playerwish") ||
         host.contains("medix") ||
-        host.contains("niram")
+        host.contains("niram") ||
+        host.contains("fst") ||
+        host.contains("embedwish") ||
+        host.contains("mwish") ||
+        host.contains("wishembed")
 
     private fun isTurboVidHost(host: String): Boolean = host.contains("turbovid") ||
         host.contains("emturbovid") ||
         host.contains("turboviplay") ||
         host.contains("sptvp") ||
-        host.contains("turbosplayer")
+        host.contains("turbosplayer") ||
+        host.contains("tvid") ||
+        host.contains("tbvid")
 
     override fun videoListSelector(): String = "html"
 
