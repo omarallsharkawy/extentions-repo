@@ -468,10 +468,10 @@
   {
     "name": "Aniyomi: SupJav",
     "pkg": "eu.kanade.tachiyomi.animeextension.all.supjav",
-    "apk": "apk/aniyomi-all.supjav-v14.30.apk",
+    "apk": "apk/aniyomi-all.supjav-v14.31.apk",
     "lang": "all",
-    "code": 30,
-    "version": "14.30",
+    "code": 31,
+    "version": "14.31",
     "nsfw": 1,
     "sources": [
       {
@@ -519,10 +519,10 @@
   {
     "name": "Aniyomi: Xnxx",
     "pkg": "eu.kanade.tachiyomi.animeextension.all.xnxx",
-    "apk": "apk/aniyomi-all.xnxx-v14.7.apk",
+    "apk": "apk/aniyomi-all.xnxx-v14.8.apk",
     "lang": "all",
-    "code": 7,
-    "version": "14.7",
+    "code": 8,
+    "version": "14.8",
     "nsfw": 1,
     "sources": [
       {
@@ -536,10 +536,10 @@
   {
     "name": "Aniyomi: Xvideos",
     "pkg": "eu.kanade.tachiyomi.animeextension.all.xvideos",
-    "apk": "apk/aniyomi-all.xvideos-v14.8.apk",
+    "apk": "apk/aniyomi-all.xvideos-v14.9.apk",
     "lang": "all",
-    "code": 8,
-    "version": "14.8",
+    "code": 9,
+    "version": "14.9",
     "nsfw": 1,
     "sources": [
       {
@@ -553,10 +553,10 @@
   {
     "name": "Aniyomi: Aflamk1",
     "pkg": "eu.kanade.tachiyomi.animeextension.ar.aflamk1",
-    "apk": "apk/aniyomi-ar.aflamk1-v14.1.apk",
+    "apk": "apk/aniyomi-ar.aflamk1-v14.2.apk",
     "lang": "ar",
-    "code": 1,
-    "version": "14.1",
+    "code": 2,
+    "version": "14.2",
     "nsfw": 1,
     "sources": [
       {
@@ -672,10 +672,10 @@
   {
     "name": "Aniyomi: Arab Seed",
     "pkg": "eu.kanade.tachiyomi.animeextension.ar.arabseed",
-    "apk": "apk/aniyomi-ar.arabseed-v14.33.apk",
+    "apk": "apk/aniyomi-ar.arabseed-v14.34.apk",
     "lang": "ar",
-    "code": 33,
-    "version": "14.33",
+    "code": 34,
+    "version": "14.34",
     "nsfw": 0,
     "sources": [
       {
@@ -706,10 +706,10 @@
   {
     "name": "Aniyomi: ArabX",
     "pkg": "eu.kanade.tachiyomi.animeextension.ar.arabx",
-    "apk": "apk/aniyomi-ar.arabx-v14.1.apk",
+    "apk": "apk/aniyomi-ar.arabx-v14.2.apk",
     "lang": "ar",
-    "code": 1,
-    "version": "14.1",
+    "code": 2,
+    "version": "14.2",
     "nsfw": 1,
     "sources": [
       {
@@ -1080,10 +1080,10 @@
   {
     "name": "Aniyomi: AnimeParadise",
     "pkg": "eu.kanade.tachiyomi.animeextension.en.animeparadise",
-    "apk": "apk/aniyomi-en.animeparadise-v14.3.apk",
+    "apk": "apk/aniyomi-en.animeparadise-v14.4.apk",
     "lang": "en",
-    "code": 3,
-    "version": "14.3",
+    "code": 4,
+    "version": "14.4",
     "nsfw": 0,
     "sources": [
       {
@@ -1267,10 +1267,10 @@
   {
     "name": "Aniyomi: hanime.tv",
     "pkg": "eu.kanade.tachiyomi.animeextension.en.hanime",
-    "apk": "apk/aniyomi-en.hanime-v14.23.apk",
+    "apk": "apk/aniyomi-en.hanime-v14.24.apk",
     "lang": "en",
-    "code": 23,
-    "version": "14.23",
+    "code": 24,
+    "version": "14.24",
     "nsfw": 1,
     "sources": [
       {
@@ -1386,10 +1386,10 @@
   {
     "name": "Aniyomi: KimoiTV",
     "pkg": "eu.kanade.tachiyomi.animeextension.en.kimoitv",
-    "apk": "apk/aniyomi-en.kimoitv-v14.3.apk",
+    "apk": "apk/aniyomi-en.kimoitv-v14.4.apk",
     "lang": "en",
-    "code": 3,
-    "version": "14.3",
+    "code": 4,
+    "version": "14.4",
     "nsfw": 0,
     "sources": [
       {

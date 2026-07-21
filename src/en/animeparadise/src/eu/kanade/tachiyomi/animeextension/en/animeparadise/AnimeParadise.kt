@@ -91,7 +91,9 @@ class AnimeParadise :
                     .build()
                     .toString()
             }
+
             genreFilter != null && genreFilter.state != 0 -> apiUrl + genreFilter.toUriPart()
+
             else -> "$apiUrl/anime/highrate"
         }
 

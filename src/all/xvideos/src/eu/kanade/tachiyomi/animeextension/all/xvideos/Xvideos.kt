@@ -137,10 +137,12 @@ class Xvideos :
             query.isNotBlank() -> {
                 searchUrl(query.trim(), pageIndex, sort, datef, durf, quality, typef = null)
             }
+
             brand.isNotBlank() -> {
                 // Channel / brand search (site "Channels" tab → video results with data-is-channel)
                 searchUrl(brand, pageIndex, sort, datef, durf, quality, typef = "channel")
             }
+
             category.isNotBlank() -> {
                 // Category path: /c/{Name-id}[/pageIndex] — site ignores sort/datef/durf here
                 val path = if (pageIndex == 0) {
@@ -150,6 +152,7 @@ class Xvideos :
                 }
                 GET("$baseUrl$path", searchHeaders())
             }
+
             tag.isNotBlank() -> {
                 val slug = normalizeSlug(tag)
                 val path = if (pageIndex == 0) {
@@ -159,11 +162,13 @@ class Xvideos :
                 }
                 GET("$baseUrl$path", searchHeaders())
             }
+
             // Empty text + only Sort/Date/Duration/Quality: site requires k= (no k → homepage;
             // empty/special k → 500). Verified broad keyword "a" applies all filters (~full page).
             hasQueryFilters -> {
                 searchUrl(FILTER_ONLY_KEYWORD, pageIndex, sort, datef, durf, quality, typef = null)
             }
+
             else -> popularAnimeRequest(page)
         }
     }

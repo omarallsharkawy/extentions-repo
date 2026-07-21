@@ -62,10 +62,12 @@ class KimoiTV : ParsedAnimeHttpSource() {
 
         return when {
             query.isNotBlank() -> GET("$baseUrl/search/?q=$query".addPage(page), headers)
+
             firstSelected != null -> {
                 val sortPart = sortFilter?.toUriPart().orEmpty()
                 GET("$baseUrl${firstSelected.toUriPart()}$sortPart".addPage(page), headers)
             }
+
             else -> popularAnimeRequest(page)
         }
     }

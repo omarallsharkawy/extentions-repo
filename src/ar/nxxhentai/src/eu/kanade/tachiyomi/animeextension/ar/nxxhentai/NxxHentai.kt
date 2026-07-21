@@ -120,6 +120,7 @@ class NxxHentai :
                 val path = if (page <= 1) "$baseUrl/movies/" else "$baseUrl/movies/page/$page/"
                 return GET(path, headers)
             }
+
             "episodes" -> {
                 val path = if (page <= 1) "$baseUrl/episodes/" else "$baseUrl/episodes/page/$page/"
                 return GET(path, headers)
@@ -702,6 +703,7 @@ class NxxHentai :
                     )
                 }.getOrElse { listOf(Video(clean, quality, clean, headers = vHeaders)) }
             }
+
             else -> listOf(Video(clean, quality, clean, headers = vHeaders))
         }
     }

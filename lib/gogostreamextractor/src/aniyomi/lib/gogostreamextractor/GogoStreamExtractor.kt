@@ -65,6 +65,7 @@ class GogoStreamExtractor(private val client: OkHttpClient) {
                 val playlistUrl = sourceList.first().file
                 playlistUtils.extractFromHls(playlistUrl, serverUrl, videoNameGen = { qualityPrefix + it })
             }
+
             else -> {
                 val headers = Headers.headersOf("Referer", serverUrl)
                 sourceList.map { video ->

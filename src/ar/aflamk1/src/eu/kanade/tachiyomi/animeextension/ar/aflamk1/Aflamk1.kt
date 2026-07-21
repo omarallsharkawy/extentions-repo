@@ -113,16 +113,20 @@ class Aflamk1 :
                     .build()
                 GET(url, headers)
             }
+
             tag.isNotBlank() -> {
                 val slug = slugify(tag)
                 val path = if (page <= 1) "/tags/$slug/" else "/tags/$slug/$page/"
                 GET(baseUrl + path, headers)
             }
+
             category.isNotBlank() -> {
                 val path = if (page <= 1) "/$category/" else "/$category/$page/"
                 GET(baseUrl + path, headers)
             }
+
             sort.isNotBlank() -> GET(pagedPath(sort, page), headers)
+
             else -> popularAnimeRequest(page)
         }
     }

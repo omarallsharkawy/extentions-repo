@@ -258,7 +258,9 @@ class SupJav(override val lang: String = "en") :
                 when {
                     script.contains("eval(function(p,a,c") ->
                         JsUnpacker.unpackAndCombine(script)
+
                     script.contains("m3u8") -> script
+
                     else -> null
                 }
             }

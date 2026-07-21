@@ -113,11 +113,13 @@ class SexAlArab :
                     .build()
                 GET(url, headers)
             }
+
             tag.isNotBlank() -> {
                 val slug = slugify(tag)
                 val path = if (page <= 1) "/tags/$slug/" else "/tags/$slug/$page/"
                 GET(baseUrl + path, headers)
             }
+
             category.isNotBlank() -> {
                 if (page <= 1) {
                     GET("$baseUrl/$category/", headers)
@@ -133,7 +135,9 @@ class SexAlArab :
                     GET(url, headers)
                 }
             }
+
             sort.isNotBlank() -> GET(pagedPath(sort, page), headers)
+
             else -> popularAnimeRequest(page)
         }
     }

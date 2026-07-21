@@ -186,6 +186,7 @@ class KimoiTVExtractor(private val client: OkHttpClient, private val headers: He
                 masterHeaders = videoHeaders,
                 videoHeaders = videoHeaders,
             )
+
             else -> listOf(Video(videoUrl, "Video", videoUrl, headers = videoHeaders))
         }
     }

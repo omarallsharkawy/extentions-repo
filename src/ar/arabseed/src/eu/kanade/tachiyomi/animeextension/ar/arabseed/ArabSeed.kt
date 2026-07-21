@@ -276,6 +276,7 @@ class ArabSeed :
             ?.let { img ->
                 when {
                     img.hasAttr("content") -> img.attr("abs:content")
+
                     else -> img.attr("abs:data-src")
                         .ifEmpty { img.attr("abs:data-lazy-src") }
                         .ifEmpty { img.attr("abs:src") }

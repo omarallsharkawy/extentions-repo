@@ -124,10 +124,12 @@ class ArabX :
                 val slug = encodePathSegment(tag)
                 return GET(paginatedPath("tags/$slug", page), headers)
             }
+
             model.isNotEmpty() -> {
                 val slug = encodePathSegment(model)
                 return GET(paginatedPath("models/$slug", page), headers)
             }
+
             category.isNotEmpty() -> {
                 return GET(paginatedPath("categories/$category", page), headers)
             }
@@ -288,6 +290,7 @@ class ArabX :
                         videoNameGen = { q -> "$labelPrefix - $q" },
                     )
                 }
+
                 url.contains(".mp4", ignoreCase = true) -> {
                     results += Video(url, "$labelPrefix - MP4", url, streamHeaders)
                 }

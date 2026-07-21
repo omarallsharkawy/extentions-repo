@@ -151,8 +151,10 @@ class AdultHtml5Player(
         return when {
             url.contains("mp4_hd", ignoreCase = true) ||
                 url.contains("video_hd", ignoreCase = true) -> "MP4 High"
+
             url.contains("mp4_sd", ignoreCase = true) ||
                 url.contains("video_sd", ignoreCase = true) -> "MP4 Low"
+
             else -> "MP4 $fallback"
         }
     }
@@ -165,10 +167,13 @@ class AdultHtml5Player(
         val segment = path.substringBefore("/")
         return when {
             segment.startsWith("video.") -> segment.removePrefix("video.")
+
             segment.startsWith("video-") -> segment.removePrefix("video-")
+
             segment.startsWith("video") &&
                 segment.length > 5 &&
                 segment.drop(5).all { it.isDigit() } -> segment.removePrefix("video")
+
             else -> EMBED_ID_REGEX.find(url)?.groupValues?.get(1)
         }?.takeIf { it.isNotBlank() }
     }

@@ -317,15 +317,22 @@ class ChicoryGlue {
 
             result.add(
                 when (ch) {
-                    'p' -> mem.readI32(buf) and 0xFFFFFFFFL // unsigned I32 pointer
-                    'i' -> mem.readI32(buf) // signed I32
-                    'j' -> mem.readI64(buf) // I64
+                    'p' -> mem.readI32(buf) and 0xFFFFFFFFL
+
+                    // unsigned I32 pointer
+                    'i' -> mem.readI32(buf)
+
+                    // signed I32
+                    'j' -> mem.readI64(buf)
+
+                    // I64
                     'd' -> {
                         // F64 bits — read raw 8 bytes as Long for bit-exact representation
                         val low = mem.readI32(buf) and 0xFFFFFFFFL
                         val high = mem.readI32(buf + 4) and 0xFFFFFFFFL
                         (high shl 32) or low
                     }
+
                     else -> 0L // unknown type char — skip with 0
                 },
             )
@@ -505,6 +512,7 @@ class ChicoryGlue {
                 is EmvalHandleManager.EmvalValue.JsObject -> {
                     emval.properties[propName] ?: 0 // undefined if not found
                 }
+
                 is EmvalHandleManager.EmvalValue.JsString -> {
                     when (propName) {
                         "length" -> {
@@ -514,9 +522,11 @@ class ChicoryGlue {
                             emvalManager.markTransient(handle)
                             handle
                         }
+
                         else -> 0
                     }
                 }
+
                 else -> {
                     Log.d(TAG, "emval_get_property: handle=$objectHandle ($emval) has no property '$propName' — returning undefined")
                     0 // undefined
@@ -561,10 +571,15 @@ class ChicoryGlue {
             val globalName = instance.memory().readCString(globalNamePtr)
             val handle = when (globalName) {
                 "window", "self", "globalThis", "top" -> emvalManager.windowHandle
+
                 "document" -> emvalManager.documentHandle
+
                 "navigator" -> emvalManager.navigatorHandle
+
                 "location" -> emvalManager.locationHandle
+
                 "console" -> emvalManager.consoleHandle
+
                 else -> {
                     Log.d(TAG, "emval_get_global: unknown global '$globalName' — returning undefined")
                     0 // undefined handle

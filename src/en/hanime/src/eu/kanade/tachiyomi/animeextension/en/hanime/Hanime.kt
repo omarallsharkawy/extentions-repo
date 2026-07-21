@@ -119,7 +119,9 @@ class Hanime :
 
     private suspend fun createSignatureProvider(mode: String?): SignatureProvider = when (mode) {
         "native" -> NativeSignatureProvider()
+
         "webview" -> WebViewSignatureProvider()
+
         "wasm" -> {
             val binary = runCatching {
                 withContext(Dispatchers.IO) { HanimeWasmBinary.fetchWasmBinary(client) }
@@ -131,6 +133,7 @@ class Hanime :
                 WebViewSignatureProvider()
             }
         }
+
         else -> {
             Log.w(TAG, "Unknown signature provider mode '$mode', falling back to WebViewSignatureProvider")
             WebViewSignatureProvider()
@@ -325,8 +328,11 @@ class Hanime :
         // Censored content filter
         val censoredFilter = preferences.getString(PREF_CENSORED_KEY, PREF_CENSORED_DEFAULT) ?: PREF_CENSORED_DEFAULT
         filtered = when (censoredFilter) {
-            "uncensored" -> filtered.filter { it.isCensored != true } // != true includes null/unknown items as potentially uncensored
+            "uncensored" -> filtered.filter { it.isCensored != true }
+
+            // != true includes null/unknown items as potentially uncensored
             "censored" -> filtered.filter { it.isCensored == true }
+
             else -> filtered
         }
 
