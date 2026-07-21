@@ -1,63 +1,24 @@
-<div align="center">
+# Aniyomi & Anikku Extensions Repository
 
-# 🎬 Aniyomi & Anikku Anime Extensions Repository
+An extension repository for Aniyomi and Anikku Android applications.
 
-[![Build Status](https://img.shields.io/badge/Build-Passing-brightgreen?style=for-the-badge&logo=github-actions)](https://github.com/omarallsharkawy/extentions-repo)
-[![Aniyomi Compatible](https://img.shields.io/badge/Aniyomi-Compatible-blueviolet?style=for-the-badge&logo=android)](https://github.com/aniyomiorg/aniyomi)
-[![Kotlin](https://img.shields.io/badge/Kotlin-1.9%2B-purple?style=for-the-badge&logo=kotlin)](https://kotlinlang.org/)
-[![License](https://img.shields.io/badge/License-Apache%202.0-blue?style=for-the-badge)](LICENSE)
+## Installation
 
-An official, highly optimized extension repository for **[Aniyomi](https://github.com/aniyomiorg/aniyomi)** and **[Anikku](https://github.com/komikku-app/anikku)** Android apps. Providing lightning-fast anime, cartoon, movie, and Asian drama streaming sources.
+### Adding the Repository to Aniyomi / Anikku
 
----
+Copy and paste the following Repository URL into the application settings under **Settings > Extensions > Extension Repositories**:
 
-### 🚀 Quick One-Click Installation
-
-| Add to Aniyomi | Add to Anikku | Direct Repo URL |
-| :---: | :---: | :---: |
-| [![Install Aniyomi](https://img.shields.io/badge/Add_Repo-Aniyomi-238636?style=flat-square&logo=android&logoColor=white)](https://intradeus.github.io/http-protocol-redirector/?r=aniyomi://add-repo?url=https://raw.githubusercontent.com/omarallsharkawy/extentions-repo/repo/index.min.json) | [![Install Anikku](https://img.shields.io/badge/Add_Repo-Anikku-1F6FEB?style=flat-square&logo=android&logoColor=white)](https://intradeus.github.io/http-protocol-redirector/?r=anikku://add-repo?url=https://raw.githubusercontent.com/omarallsharkawy/extentions-repo/repo/index.min.json) | `https://raw.githubusercontent.com/omarallsharkawy/extentions-repo/repo/index.min.json` |
-
-</div>
+```
+https://raw.githubusercontent.com/omarallsharkawy/extentions-repo/repo/index.min.json
+```
 
 ---
 
-## 🌟 Key Features & Architectural Enhancements
+## Development Guide
 
-- ⚡ **Zero-Latency Offline Filters**: All filter sheets (`getFilterList()`) initialize instantly offline without blocking the UI thread or sending unnecessary network requests.
-- 🔄 **Robust Infinite Scroll & Pagination**: Custom CSS selectors and dynamic pagination logic prevent premature scrolling truncation during both catalog browsing and keyword searches.
-- 🔒 **Cloudflare & Network Resiliency**: Built-in HTTP client interceptors, cookie managers, and user-agent rotation to seamlessly bypass anti-bot challenges.
-- 📱 **Multi-Language Source Coverage**: Extensive collection of curated anime and media providers across **Arabic (`ar`)**, **English (`en`)**, **Multi-language (`all`)**, **Spanish (`es`)**, **French (`fr`)**, **Italian (`it`)**, **Portuguese (`pt`)**, **Indonesian (`id`)**, and more.
+### Prerequisites
 
----
-
-## 📦 Extension Catalog Breakdown
-
-<details open>
-<summary><b>🌍 Arabic Extensions (<code>src/ar</code>)</b></summary>
-
-- **Anime4Up** - High-speed Arabic anime streaming with category & tag pagination.
-- **ArabSeed** - Movies, series, and anime with full search filter support.
-- **Animerco**, **Cimaleek**, **EgyDead**, **FASELHD**, **Okanime**, **Aflamk1**, **CimaLight**, **ArabsHentai**, **ArabX**, **ArabXN**, **SexAlArab**, **SexMahali**, **NxxHentai**.
-</details>
-
-<details open>
-<summary><b>🇬🇧 English Extensions (<code>src/en</code>)</b></summary>
-
-- **UniqueStream**, **Hanime**, **Anikage**, **AnimeParadise**, **AnimeTake**, **HexaWatch**, **Kayoanime**, **KimoiTV**, **Mapple**, **Myanime**, **OneThreeTwoAnime**, **PinoyMoviePedia**.
-</details>
-
-<details open>
-<summary><b>🌐 Multi-Language / Adult Extensions (<code>src/all</code>)</b></summary>
-
-- **MissAV**, **NyaaTorrent**, **PTorrent**, **StreamingCommunity**, **SupJav**, **XNXX**, **XVideos**, **PornHub**.
-</details>
-
----
-
-## 🛠️ Developer & Building Guide
-
-### Environment Setup
-Ensure your local development environment has Java 17+ (or Android Studio JBR / Adoptium JDK 25) configured:
+Ensure the Android SDK and Java Development Kit (JDK 17 or higher) are installed and configured in your environment variables:
 
 ```powershell
 $env:JAVA_HOME = "C:\Program Files\Android\Android Studio\jbr"
@@ -65,32 +26,29 @@ $env:ANDROID_HOME = "$env:LOCALAPPDATA\Android\Sdk"
 $env:Path = "$env:JAVA_HOME\bin;$env:ANDROID_HOME\platform-tools;$env:Path"
 ```
 
-### Compiling Extensions
-To compile a specific extension module:
+### Building Extensions
+
+To compile extensions locally using the Gradle wrapper:
 
 ```bash
-# Example: Compiling ArabSeed extension
-./gradlew :src:ar:arabseed:compileReleaseKotlin
-
-# Example: Compiling UniqueStream extension
-./gradlew :src:en:uniquestream:compileReleaseKotlin
+# Compile a specific extension module
+./gradlew :src:<lang>:<extension_name>:compileReleaseKotlin
 ```
 
-### Code Formatting & Linting
-We enforce strict Kotlin formatting rules via Spotless:
+### Code Formatting
+
+This project enforces Kotlin code formatting rules using Spotless:
 
 ```bash
-# Check code formatting across all modules
+# Check code formatting
 ./gradlew spotlessKotlinCheck
 
-# Automatically apply formatting fixes
+# Apply code formatting fixes
 ./gradlew spotlessKotlinApply
 ```
 
 ---
 
-<div align="center">
+## License
 
-Made with ❤️ for the Aniyomi & Anikku Community.
-
-</div>
+Copyright (c) 2026 Aniyomi & Anikku Extensions Contributors. Licensed under the Apache License, Version 2.0.
