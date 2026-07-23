@@ -19,8 +19,10 @@ import eu.kanade.tachiyomi.network.await
 import eu.kanade.tachiyomi.network.awaitSuccess
 import keiyoushi.utils.bodyString
 import keiyoushi.utils.getPreferencesLazy
-import keiyoushi.utils.parallelCatchingFlatMapBlocking
 import keiyoushi.utils.useAsJsoup
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.runBlocking
 import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import okhttp3.Request
@@ -54,13 +56,9 @@ class SupJav(override val lang: String = "en") :
 
     // Use app client as-is (includes CF interceptor + cookie jar). No override.
 
-    override fun headersBuilder() = super.headersBuilder().apply {
-        // Keep app / NetworkHelper User-Agent (Android Chrome shape).
-        set("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8")
-        set("Accept-Language", "en-US,en;q=0.9")
-        set("Referer", "$baseUrl/")
-        set("Origin", baseUrl)
-    }
+    override fun headersBuilder() = super.headersBuilder()
+        .set("Referer", "$baseUrl/")
+        .set("Origin", baseUrl)
 
     private val langPath = when (lang) {
         "en" -> ""
@@ -236,7 +234,7 @@ class SupJav(override val lang: String = "en") :
         if (query.startsWith(PREFIX_SEARCH)) {
             val id = query.removePrefix(PREFIX_SEARCH)
             return runCatching {
-                client.newCall(GET(getFullUrl(id)))
+                client.newCall(GET("$baseUrl/$id"))
                     .awaitSuccess()
                     .use(::searchAnimeByIdParse)
             }.getOrDefault(AnimesPage(emptyList(), false))
@@ -433,27 +431,46 @@ class SupJav(override val lang: String = "en") :
         episode_number = 1F
     }
 
-    private fun getFullUrl(pathUrl: String): String = when {
-        pathUrl.startsWith("http://") || pathUrl.startsWith("https://") -> pathUrl
-        pathUrl.startsWith("/") -> "$baseUrl$pathUrl"
-        else -> "$baseUrl/$pathUrl"
-    }
-
-    override fun animeDetailsRequest(anime: SAnime): Request = GET(getFullUrl(anime.url), headers)
-
-    override fun episodeListRequest(anime: SAnime): Request = GET(getFullUrl(anime.url), headers)
-
-    override fun videoListRequest(episode: SEpisode): Request = GET(getFullUrl(episode.url), headers)
-
     // ============================ Video Links =============================
     override fun videoListParse(response: Response): List<Video> {
+        val body = response.bodyString()
         val doc = response.useAsJsoup()
 
         val players = doc.select("div.btnst > a").toList()
             .filter { it.text() in SUPPORTED_PLAYERS }
             .map { it.text() to it.attr("data-link").reversed() }
 
-        return players.parallelCatchingFlatMapBlocking(::videosFromPlayer)
+        if (players.isEmpty()) {
+            if (body.contains("Just a moment", ignoreCase = true) ||
+                body.contains("cf-browser-verification", ignoreCase = true) ||
+                body.contains("challenge-platform", ignoreCase = true)
+            ) {
+                throw Exception("SupJav: Cloudflare is blocking the page. Open in WebView, solve the check, then retry.")
+            }
+            throw Exception("SupJav: no video servers found. Page had ${doc.select("div.btnst a").size} buttons, ${doc.select("a[data-link]").size} data-link elements. Site layout may have changed.")
+        }
+
+        val errors = mutableListOf<String>()
+        val results = runBlocking {
+            players.map { player ->
+                async {
+                    try {
+                        val result = videosFromPlayer(player)
+                        if (result.isEmpty()) errors.add("${player.first}: returned empty")
+                        result
+                    } catch (e: Exception) {
+                        errors.add("${player.first}: ${e.message?.take(100) ?: e.javaClass.simpleName}")
+                        emptyList()
+                    }
+                }
+            }.awaitAll()
+        }
+        val videos = results.flatten()
+
+        if (videos.isEmpty()) {
+            throw Exception("SupJav: all ${players.size} server(s) failed — ${errors.joinToString("; ")}")
+        }
+        return videos.distinctBy { it.videoUrl }
     }
 
     private val playlistUtils by lazy { PlaylistUtils(client, headers) }
