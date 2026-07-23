@@ -51,20 +51,43 @@ class SupJav(override val lang: String = "en") :
     // ============================== Popular ===============================
     override fun popularAnimeRequest(page: Int) = GET("$baseUrl$langPath/popular/page/$page", headers)
 
-    override fun popularAnimeSelector() = "div.posts > div.post > a"
+    override fun popularAnimeSelector() = "div.posts > div.post > a, div.posts > div.post, div.post > a, div.post"
 
     override fun popularAnimeFromElement(element: Element) = SAnime.create().apply {
-        val link = if (element.tagName() == "a") element else element.selectFirst("a")!!
+        val link = if (element.tagName() == "a") element else (element.selectFirst("a") ?: element)
         setUrlWithoutDomain(link.attr("href"))
 
-        val img = element.selectFirst("img")
+        val img = element.selectFirst("img") ?: element.parent()?.selectFirst("img")
         if (img != null) {
             title = img.attr("alt").ifBlank { img.attr("title") }
-            thumbnail_url = img.absUrl("data-original").ifBlank { img.absUrl("src") }
-                .let { if (it.startsWith("//")) "https:$it" else it }
+            val rawThumb = img.attr("data-original")
+                .ifBlank { img.attr("data-src") }
+                .ifBlank { img.attr("src") }
+                .ifBlank { img.absUrl("data-original") }
+                .ifBlank { img.absUrl("data-src") }
+                .ifBlank { img.absUrl("src") }
+
+            thumbnail_url = when {
+                rawThumb.startsWith("//") -> "https:$rawThumb"
+                rawThumb.startsWith("/") -> "$baseUrl$rawThumb"
+                else -> rawThumb
+            }
         }
         if (title.isBlank()) {
-            title = link.attr("title").ifBlank { element.selectFirst("h3, h2")?.text() ?: "" }
+            title = link.attr("title").ifBlank {
+                element.selectFirst("h3, h2")?.text()
+                    ?: element.parent()?.selectFirst("h3, h2")?.text()
+                    ?: ""
+            }
+        }
+
+        val duration = (
+            element.selectFirst("span.duration, span.time, div.duration, time")
+                ?: element.parent()?.selectFirst("span.duration, span.time, div.duration, time")
+            )?.text()?.trim()
+
+        if (!duration.isNullOrBlank()) {
+            title = "$title [$duration]"
         }
     }
 
@@ -81,25 +104,33 @@ class SupJav(override val lang: String = "en") :
 
     // =============================== Search ===============================
     override suspend fun getSearchAnime(page: Int, query: String, filters: AnimeFilterList): AnimesPage {
-        if (query.startsWith("https://")) {
-            val url = query.toHttpUrl()
-            if (url.host != baseUrl.toHttpUrl().host) {
-                throw Exception("Unsupported url")
+        if (query.startsWith("https://") || query.startsWith("http://")) {
+            val url = runCatching { query.toHttpUrl() }.getOrNull()
+                ?: return AnimesPage(emptyList(), false)
+            if (!url.host.equals(baseUrl.toHttpUrl().host, ignoreCase = true)) {
+                throw Exception("Unsupported url host")
             }
-            val path = url.pathSegments.takeIf { it.isNotEmpty() }?.joinToString("/")
-                ?: throw Exception("Unsupported url")
+            val path = url.encodedPath.removePrefix("/")
+            if (path.isBlank()) {
+                return AnimesPage(emptyList(), false)
+            }
             return getSearchAnime(page, "$PREFIX_SEARCH$path", filters)
         }
         if (query.startsWith(PREFIX_SEARCH)) {
             val id = query.removePrefix(PREFIX_SEARCH).trim()
+            if (id.isBlank()) {
+                return AnimesPage(emptyList(), false)
+            }
             val url = when {
                 id.startsWith("http://") || id.startsWith("https://") -> id
                 id.startsWith("/") -> "$baseUrl$id"
                 else -> "$baseUrl/$id"
             }
-            return client.newCall(GET(url, headers))
-                .awaitSuccess()
-                .use(::searchAnimeByIdParse)
+            return runCatching {
+                client.newCall(GET(url, headers))
+                    .awaitSuccess()
+                    .use(::searchAnimeByIdParse)
+            }.getOrElse { AnimesPage(emptyList(), false) }
         }
         return super.getSearchAnime(page, query, filters)
     }
@@ -171,11 +202,12 @@ class SupJav(override val lang: String = "en") :
             "Category / التصنيف",
             arrayOf(
                 Pair("All / الكل", ""),
-                Pair("Censored / مترجم وخام", "censored"),
-                Pair("Uncensored / غير مشفر", "uncensored"),
+                Pair("Censored / مترجم وخام", "censored-jav"),
+                Pair("Uncensored / غير مشفر", "uncensored-jav"),
                 Pair("Amateur / هاوي", "amateur"),
-                Pair("English Subtitle / ترجمة إنجليزية", "english-subtitle"),
-                Pair("Reduced Price / تخفيضات", "reduced-price"),
+                Pair("English Subtitle / ترجمة إنجليزية", "english-subtitles"),
+                Pair("Chinese Subtitle / ترجمة صينية", "chinese-subtitles"),
+                Pair("Reducing Mosaic / تخفيض التشفير", "reducing-mosaic"),
             ),
         )
 
@@ -201,9 +233,20 @@ class SupJav(override val lang: String = "en") :
 
     // =========================== Anime Details ============================
     override fun animeDetailsParse(document: Document) = SAnime.create().apply {
-        val content = document.selectFirst("div.content > div.post-meta")!!
-        title = content.selectFirst("h2")!!.text()
-        thumbnail_url = content.selectFirst("img")?.absUrl("src")
+        val content = document.selectFirst("div.content > div.post-meta")
+            ?: throw Exception("Could not find post details")
+        title = content.selectFirst("h2")?.text() ?: ""
+        thumbnail_url = content.selectFirst("img")?.let { img ->
+            val rawThumb = img.attr("data-original")
+                .ifBlank { img.attr("data-src") }
+                .ifBlank { img.attr("src") }
+                .ifBlank { img.absUrl("src") }
+            when {
+                rawThumb.startsWith("//") -> "https:$rawThumb"
+                rawThumb.startsWith("/") -> "$baseUrl$rawThumb"
+                else -> rawThumb
+            }
+        }
 
         content.selectFirst("div.cats")?.run {
             author = select("p:contains(Maker :) > a").textsOrNull()
@@ -226,6 +269,16 @@ class SupJav(override val lang: String = "en") :
         return listOf(episode)
     }
 
+    override fun episodeListParse(response: Response): List<SEpisode> {
+        val episode = SEpisode.create().apply {
+            name = "JAV"
+            episode_number = 1F
+            url = response.request.url.encodedPath
+        }
+
+        return listOf(episode)
+    }
+
     override fun episodeListSelector(): String = throw UnsupportedOperationException()
 
     override fun episodeFromElement(element: Element): SEpisode = throw UnsupportedOperationException()
@@ -234,11 +287,30 @@ class SupJav(override val lang: String = "en") :
     override fun videoListParse(response: Response): List<Video> {
         val doc = response.useAsJsoup()
 
-        val players = doc.select("div.btnst a[data-link], div.btnst > a").toList()
-            .filter { it.text() in SUPPORTED_PLAYERS }
-            .map { it.text() to it.attr("data-link").reversed() }
+        val players = doc.select("div.btnst a[data-link], div.btnst > a, div.btns a[data-link], div.btns > a, a.btn-server")
+            .distinct()
+            .mapNotNull { element ->
+                val label = cleanServerLabel(element.text()) ?: return@mapNotNull null
+                val link = element.attr("data-link").ifBlank { element.attr("href") }.trim()
+                if (link.isBlank() || link.startsWith("javascript:", ignoreCase = true)) {
+                    return@mapNotNull null
+                }
+                label to link
+            }
 
         return players.parallelCatchingFlatMapBlocking(::videosFromPlayer)
+    }
+
+    private fun cleanServerLabel(text: String): String? {
+        val upper = text.uppercase()
+        return when {
+            upper.contains("FST") || upper.contains("STREAMWISH") || upper.contains("FASTSTREAM") -> "FST"
+            upper.contains("STREAMTAPE") -> "ST"
+            upper.contains("ST") -> "ST"
+            upper.contains("VOE") -> "VOE"
+            upper.contains("TV") -> "TV"
+            else -> null
+        }
     }
 
     private val playlistUtils by lazy { PlaylistUtils(client, headers) }
@@ -254,9 +326,22 @@ class SupJav(override val lang: String = "en") :
         client.newBuilder().followRedirects(false).build()
     }
 
-    private suspend fun resolveProtectorRedirect(id: String): String? = noRedirectClient.newCall(GET("$PROTECTOR_URL/supjav.php?c=$id", protectorHeaders))
-        .await()
-        .use { it.headers["location"] }
+    private suspend fun resolveProtectorRedirect(id: String): String? {
+        if (id.startsWith("http://") || id.startsWith("https://")) {
+            return id
+        }
+        if (id.startsWith("//")) {
+            return "https:$id"
+        }
+
+        return fetchRedirect(id.reversed()) ?: fetchRedirect(id)
+    }
+
+    private suspend fun fetchRedirect(code: String): String? = runCatching {
+        noRedirectClient.newCall(GET("$PROTECTOR_URL/supjav.php?c=$code", protectorHeaders))
+            .await()
+            .use { it.headers["location"] }
+    }.getOrNull()
 
     private suspend fun videosFromPlayer(player: Pair<String, String>): List<Video> {
         val (hoster, id) = player
