@@ -468,10 +468,10 @@
   {
     "name": "Aniyomi: SupJav",
     "pkg": "eu.kanade.tachiyomi.animeextension.all.supjav",
-    "apk": "aniyomi-all.supjav-v14.62.apk",
+    "apk": "aniyomi-all.supjav-v14.63.apk",
     "lang": "all",
-    "code": 62,
-    "version": "14.62",
+    "code": 63,
+    "version": "14.63",
     "nsfw": 1,
     "sources": [
       {
@@ -912,8 +912,8 @@
     "pkg": "eu.kanade.tachiyomi.animeextension.ar.witanime",
     "apk": "aniyomi-ar.witanime-v14.61.apk",
     "lang": "ar",
-    "code": 62,
-    "version": "14.62",
+    "code": 63,
+    "version": "14.63",
     "nsfw": 0,
     "sources": [
       {
@@ -1371,8 +1371,8 @@
     "pkg": "eu.kanade.tachiyomi.animeextension.en.kickassanime",
     "apk": "aniyomi-en.kickassanime-v14.60.apk",
     "lang": "en",
-    "code": 62,
-    "version": "14.62",
+    "code": 63,
+    "version": "14.63",
     "nsfw": 0,
     "sources": [
       {
