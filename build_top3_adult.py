@@ -79,6 +79,7 @@ print(f"\nTotal {count} APKs updated across 3 fallback paths!")
 
 print("\n4. Rebuilding index manifests...")
 import rebuild_index
-rebuild_index.main() if hasattr(rebuild_index, 'main') else None
+rebuild_index.main()
 
 print("\nCompleted build for top 3 adult extensions!")
+
