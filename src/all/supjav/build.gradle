@@ -1,7 +1,7 @@
 ext {
     extName = 'SupJav'
     extClass = '.SupJavFactory'
-    extVersionCode = 61
+    extVersionCode = 62
     isNsfw = true
 }
 
@@ -11,10 +11,5 @@ dependencies {
     implementation(project(":lib:streamtapeextractor"))
     implementation(project(":lib:streamwishextractor"))
     implementation(project(":lib:voeextractor"))
-    implementation(project(":lib:doodextractor"))
-    implementation(project(":lib:mixdropextractor"))
-    implementation(project(":lib:uqloadextractor"))
-    implementation(project(":lib:vidhideextractor"))
     implementation(project(":lib:playlistutils"))
-    implementation(project(":lib:unpacker"))
 }
