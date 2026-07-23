@@ -34,6 +34,13 @@ class SexTB : ParsedAnimeHttpSource() {
     override fun headersBuilder(): Headers.Builder = super.headersBuilder()
         .set("Referer", "$baseUrl/")
         .set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36")
+        .set("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8")
+        .set("Accept-Language", "en-US,en;q=0.9")
+        .set("Sec-Fetch-Dest", "document")
+        .set("Sec-Fetch-Mode", "navigate")
+        .set("Sec-Fetch-Site", "same-origin")
+        .set("Sec-Fetch-User", "?1")
+        .set("Upgrade-Insecure-Requests", "1")
 
     // Extractors
     private val streamwishExtractor by lazy { StreamWishExtractor(client, headers) }
@@ -83,18 +90,37 @@ class SexTB : ParsedAnimeHttpSource() {
             return GET(url, headers)
         }
 
+        var categorySlug = ""
+        var genreSlug = ""
         var studioSlug = ""
         var actressSlug = ""
+        var qualitySlug = ""
+        var yearSlug = ""
+        var sortSlug = ""
 
         for (filter in filters) {
             when (filter) {
+                is CategoryFilter -> categorySlug = filter.selected
+                is GenreFilter -> genreSlug = filter.selected
                 is StudioFilter -> studioSlug = filter.selected
                 is ActressFilter -> actressSlug = filter.selected
+                is QualityFilter -> qualitySlug = filter.selected
+                is YearFilter -> yearSlug = filter.selected
+                is SortFilter -> sortSlug = filter.selected
                 else -> {}
             }
         }
 
         return when {
+            actressSlug.isNotEmpty() -> {
+                val url = if (page > 1) {
+                    "$baseUrl/actress/$actressSlug/page/$page/"
+                } else {
+                    "$baseUrl/actress/$actressSlug/"
+                }
+                GET(url, headers)
+            }
+
             studioSlug.isNotEmpty() -> {
                 val url = if (page > 1) {
                     "$baseUrl/studio/$studioSlug/page/$page/"
@@ -104,11 +130,51 @@ class SexTB : ParsedAnimeHttpSource() {
                 GET(url, headers)
             }
 
-            actressSlug.isNotEmpty() -> {
+            categorySlug.isNotEmpty() -> {
                 val url = if (page > 1) {
-                    "$baseUrl/actress/$actressSlug/page/$page/"
+                    "$baseUrl/category/$categorySlug/page/$page/"
                 } else {
-                    "$baseUrl/actress/$actressSlug/"
+                    "$baseUrl/category/$categorySlug/"
+                }
+                GET(url, headers)
+            }
+
+            genreSlug.isNotEmpty() -> {
+                val url = if (page > 1) {
+                    "$baseUrl/genre/$genreSlug/page/$page/"
+                } else {
+                    "$baseUrl/genre/$genreSlug/"
+                }
+                GET(url, headers)
+            }
+
+            qualitySlug.isNotEmpty() -> {
+                val url = if (page > 1) {
+                    "$baseUrl/quality/$qualitySlug/page/$page/"
+                } else {
+                    "$baseUrl/quality/$qualitySlug/"
+                }
+                GET(url, headers)
+            }
+
+            yearSlug.isNotEmpty() -> {
+                val url = if (page > 1) {
+                    "$baseUrl/year/$yearSlug/page/$page/"
+                } else {
+                    "$baseUrl/year/$yearSlug/"
+                }
+                GET(url, headers)
+            }
+
+            sortSlug == "trending" -> {
+                popularAnimeRequest(page)
+            }
+
+            sortSlug == "most-viewed" -> {
+                val url = if (page > 1) {
+                    "$baseUrl/most-viewed/page/$page/"
+                } else {
+                    "$baseUrl/most-viewed/"
                 }
                 GET(url, headers)
             }
@@ -127,9 +193,62 @@ class SexTB : ParsedAnimeHttpSource() {
 
     // Filters
     override fun getFilterList(): AnimeFilterList = AnimeFilterList(
+        CategoryFilter(),
+        GenreFilter(),
         StudioFilter(),
         ActressFilter(),
+        QualityFilter(),
+        YearFilter(),
+        SortFilter(),
     )
+
+    class CategoryFilter :
+        AnimeFilter.Select<String>(
+            "Category",
+            CATEGORIES.map { it.first }.toTypedArray(),
+        ) {
+        val selected get() = CATEGORIES[state].second
+
+        companion object {
+            val CATEGORIES = listOf(
+                Pair("All", ""),
+                Pair("Uncensored Leak", "uncensored-leak"),
+                Pair("JAV Uncensored", "jav-uncensored"),
+                Pair("JAV Censored", "jav-censored"),
+                Pair("Amateur", "amateur"),
+                Pair("VR", "vr"),
+            )
+        }
+    }
+
+    class GenreFilter :
+        AnimeFilter.Select<String>(
+            "Genre",
+            GENRES.map { it.first }.toTypedArray(),
+        ) {
+        val selected get() = GENRES[state].second
+
+        companion object {
+            val GENRES = listOf(
+                Pair("All", ""),
+                Pair("Anal", "anal"),
+                Pair("Big Tits", "big-tits"),
+                Pair("Blowjob", "blowjob"),
+                Pair("Cosplay", "cosplay"),
+                Pair("Creampie", "creampie"),
+                Pair("Maid", "maid"),
+                Pair("Married Woman", "married-woman"),
+                Pair("Massage", "massage"),
+                Pair("Mature", "mature"),
+                Pair("MILF", "milf"),
+                Pair("Solowork", "solowork"),
+                Pair("Squirting", "squirting"),
+                Pair("Subtitled", "subtitled"),
+                Pair("Teacher", "teacher"),
+                Pair("Uniform", "uniform"),
+            )
+        }
+    }
 
     class StudioFilter :
         AnimeFilter.Select<String>(
@@ -152,6 +271,8 @@ class SexTB : ParsedAnimeHttpSource() {
                 Pair("Prestige", "prestige-v6k9075j"),
                 Pair("Oppai", "oppai-fdt1v3fn"),
                 Pair("Kawaii", "kawaii-d073oxh7"),
+                Pair("Fitch", "fitch"),
+                Pair("FALENO", "faleno"),
             )
         }
     }
@@ -175,6 +296,69 @@ class SexTB : ParsedAnimeHttpSource() {
                 Pair("Mina Kitano", "mina-kitano"),
                 Pair("Ai Sayama", "ai-sayama"),
                 Pair("Eimi Fukada", "eimi-fukada"),
+                Pair("Maki Hojo", "maki-hojo"),
+                Pair("Chitose Saegusa", "chitose-saegusa"),
+                Pair("Nao Jinguuji", "nao-jinguuji"),
+                Pair("Asahi Mizuno", "asahi-mizuno"),
+                Pair("Reiko Kobayakawa", "reiko-kobayakawa"),
+                Pair("Mako Oda", "mako-oda"),
+                Pair("Momoko Isshiki", "momoko-isshiki"),
+                Pair("Aka Asuka", "qhcvgnp21"),
+            )
+        }
+    }
+
+    class QualityFilter :
+        AnimeFilter.Select<String>(
+            "Quality",
+            QUALITIES.map { it.first }.toTypedArray(),
+        ) {
+        val selected get() = QUALITIES[state].second
+
+        companion object {
+            val QUALITIES = listOf(
+                Pair("All", ""),
+                Pair("1080p", "1080p"),
+                Pair("720p", "720p"),
+                Pair("4K", "4k"),
+                Pair("HD", "hd"),
+            )
+        }
+    }
+
+    class YearFilter :
+        AnimeFilter.Select<String>(
+            "Year",
+            YEARS.map { it.first }.toTypedArray(),
+        ) {
+        val selected get() = YEARS[state].second
+
+        companion object {
+            val YEARS = listOf(
+                Pair("All", ""),
+                Pair("2026", "2026"),
+                Pair("2025", "2025"),
+                Pair("2024", "2024"),
+                Pair("2023", "2023"),
+                Pair("2022", "2022"),
+                Pair("2021", "2021"),
+                Pair("2020", "2020"),
+            )
+        }
+    }
+
+    class SortFilter :
+        AnimeFilter.Select<String>(
+            "Sort By",
+            SORTS.map { it.first }.toTypedArray(),
+        ) {
+        val selected get() = SORTS[state].second
+
+        companion object {
+            val SORTS = listOf(
+                Pair("Latest", "latest"),
+                Pair("Trending", "trending"),
+                Pair("Most Viewed", "most-viewed"),
             )
         }
     }
