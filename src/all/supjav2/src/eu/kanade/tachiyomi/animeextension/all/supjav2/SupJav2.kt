@@ -1,4 +1,4 @@
-package eu.kanade.tachiyomi.animeextension.all.supjav
+package eu.kanade.tachiyomi.animeextension.all.supjav2
 
 import androidx.preference.ListPreference
 import androidx.preference.PreferenceScreen
@@ -7,6 +7,7 @@ import aniyomi.lib.streamtapeextractor.StreamTapeExtractor
 import aniyomi.lib.streamwishextractor.StreamWishExtractor
 import aniyomi.lib.voeextractor.VoeExtractor
 import eu.kanade.tachiyomi.animesource.ConfigurableAnimeSource
+import eu.kanade.tachiyomi.animesource.model.AnimeFilter
 import eu.kanade.tachiyomi.animesource.model.AnimeFilterList
 import eu.kanade.tachiyomi.animesource.model.AnimesPage
 import eu.kanade.tachiyomi.animesource.model.SAnime
@@ -26,12 +27,13 @@ import okhttp3.Response
 import org.jsoup.nodes.Document
 import org.jsoup.nodes.Element
 import org.jsoup.select.Elements
+import java.net.URLEncoder
 
-class SupJav(override val lang: String = "en") :
+class SupJav2(override val lang: String = "en") :
     ParsedAnimeHttpSource(),
     ConfigurableAnimeSource {
 
-    override val name = "SupJav"
+    override val name = "SupJav 2"
 
     override val baseUrl = "https://supjav.com"
 
@@ -49,7 +51,7 @@ class SupJav(override val lang: String = "en") :
     private val preferences by getPreferencesLazy()
 
     // ============================== Popular ===============================
-    override fun popularAnimeRequest(page: Int) = GET("$baseUrl$langPath/popular/page/$page", headers)
+    override fun popularAnimeRequest(page: Int) = GET("$baseUrl$langPath/popular${if (page > 1) "/page/$page" else ""}", headers)
 
     override fun popularAnimeSelector() = "div.posts > div.post > a"
 
@@ -85,8 +87,8 @@ class SupJav(override val lang: String = "en") :
             return getSearchAnime(page, "$PREFIX_SEARCH$path", filters)
         }
         if (query.startsWith(PREFIX_SEARCH)) {
-            val id = query.removePrefix(PREFIX_SEARCH)
-            return client.newCall(GET("$baseUrl/$id"))
+            val id = query.removePrefix(PREFIX_SEARCH).removePrefix("/")
+            return client.newCall(GET("$baseUrl/$id", headers))
                 .awaitSuccess()
                 .use(::searchAnimeByIdParse)
         }
@@ -102,7 +104,34 @@ class SupJav(override val lang: String = "en") :
         return AnimesPage(listOf(details), false)
     }
 
-    override fun searchAnimeRequest(page: Int, query: String, filters: AnimeFilterList) = GET("$baseUrl$langPath/?s=$query")
+    override fun searchAnimeRequest(page: Int, query: String, filters: AnimeFilterList): Request {
+        val pagePath = if (page > 1) "/page/$page" else ""
+        return when {
+            query.startsWith(PREFIX_SEARCH) -> {
+                val id = query.removePrefix(PREFIX_SEARCH).removePrefix("/")
+                GET("$baseUrl/$id", headers)
+            }
+
+            query.isNotBlank() -> {
+                val encodedQuery = URLEncoder.encode(query.trim(), "UTF-8")
+                GET("$baseUrl$langPath$pagePath/?s=$encodedQuery", headers)
+            }
+
+            else -> {
+                val category = filters.filterIsInstance<CategoryFilter>().firstOrNull()?.toUriPart()
+                val tag = filters.filterIsInstance<TagFilter>().firstOrNull()?.toUriPart()
+                val sort = filters.filterIsInstance<SortFilter>().firstOrNull()?.toUriPart()
+
+                val url = when {
+                    !category.isNullOrBlank() -> "$baseUrl$langPath/category/$category$pagePath"
+                    !tag.isNullOrBlank() -> "$baseUrl$langPath/tag/$tag$pagePath"
+                    sort == "popular" -> "$baseUrl$langPath/popular$pagePath"
+                    else -> "$baseUrl$langPath$pagePath"
+                }
+                GET(url, headers)
+            }
+        }
+    }
 
     override fun searchAnimeSelector() = popularAnimeSelector()
 
@@ -110,17 +139,39 @@ class SupJav(override val lang: String = "en") :
 
     override fun searchAnimeNextPageSelector() = popularAnimeNextPageSelector()
 
+    // ============================== Filters ===============================
+    override fun getFilterList(): AnimeFilterList = AnimeFilterList(
+        CategoryFilter(),
+        TagFilter(),
+        SortFilter(),
+    )
+
+    open class UriPartFilter(
+        displayName: String,
+        private val vals: Array<Pair<String, String>>,
+        defaultValue: Int = 0,
+    ) : AnimeFilter.Select<String>(displayName, vals.map { it.first }.toTypedArray(), defaultValue) {
+        fun toUriPart() = vals[state].second
+    }
+
+    class CategoryFilter : UriPartFilter("Category", CATEGORIES)
+    class TagFilter : UriPartFilter("Tag", TAGS)
+    class SortFilter : UriPartFilter("Sort", SORTS)
+
     // =========================== Anime Details ============================
     override fun animeDetailsParse(document: Document) = SAnime.create().apply {
         val content = document.selectFirst("div.content > div.post-meta")
-        title = content?.selectFirst("h2")?.text() ?: ""
-        thumbnail_url = content?.selectFirst("img")?.absUrl("src")
+            ?: document.selectFirst("div.post-meta")
+        if (content != null) {
+            title = content.selectFirst("h2")?.text() ?: ""
+            thumbnail_url = content.selectFirst("img")?.absUrl("src")
 
-        content?.selectFirst("div.cats")?.run {
-            author = select("p:contains(Maker :) > a").textsOrNull()
-            artist = select("p:contains(Cast :) > a").textsOrNull()
+            content.selectFirst("div.cats")?.run {
+                author = select("p:contains(Maker :) > a").textsOrNull()
+                artist = select("p:contains(Cast :) > a").textsOrNull()
+            }
+            genre = content.select("div.tags > a").textsOrNull()
         }
-        genre = (content ?: document).select("div.tags > a").textsOrNull()
         status = SAnime.COMPLETED
     }
 
@@ -233,5 +284,37 @@ class SupJav(override val lang: String = "en") :
         private const val PREF_QUALITY_TITLE = "Preferred video quality"
         private const val PREF_QUALITY_DEFAULT = "720p"
         private val PREF_QUALITY_ENTRIES = arrayOf("1080p", "720p", "480p", "360p")
+
+        private val CATEGORIES = arrayOf(
+            Pair("All", ""),
+            Pair("Censored", "censored"),
+            Pair("Uncensored", "uncensored"),
+            Pair("Uncensored Leaked", "uncensored-leaked"),
+            Pair("VR", "vr"),
+            Pair("Reduced", "reduced"),
+        )
+
+        private val TAGS = arrayOf(
+            Pair("All", ""),
+            Pair("Amateur", "amateur"),
+            Pair("Big Tits", "big-tits"),
+            Pair("Creampie", "creampie"),
+            Pair("Cumshot", "cumshot"),
+            Pair("Documentary", "documentary"),
+            Pair("Featured", "featured"),
+            Pair("HD", "hd"),
+            Pair("Housewife", "housewife"),
+            Pair("Married Woman", "married-woman"),
+            Pair("Milf", "milf"),
+            Pair("Mosaic Removed", "mosaic-removed"),
+            Pair("Pantyhose", "pantyhose"),
+            Pair("Slut", "slut"),
+            Pair("Subtitled", "subtitled"),
+        )
+
+        private val SORTS = arrayOf(
+            Pair("Latest", ""),
+            Pair("Popular", "popular"),
+        )
     }
 }

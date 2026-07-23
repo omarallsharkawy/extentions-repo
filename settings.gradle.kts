@@ -38,7 +38,7 @@ val targetModules = listOf(
     "en:hstream", "en:kayoanime", "en:kimoitv", "en:mapple", "en:myanime", "en:onetwothreeanime",
     "en:pinoymoviepedia", "en:rule34video", "en:uniquestream",
     "all:hentaitorrent", "all:jable", "all:javgg", "all:javguru", "all:missav", "all:nyaatorrent", "all:pornhub", "all:ptorrent",
-    "all:rouvideo", "all:streamingcommunity", "all:supjav", "all:xnxx", "all:xvideos"
+    "all:rouvideo", "all:streamingcommunity", "all:supjav", "all:supjav2", "all:xnxx", "all:xvideos"
 )
 
 include(":core")

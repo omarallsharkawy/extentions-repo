@@ -7,6 +7,7 @@ from pathlib import Path
 TARGETS = [
     ('all', 'pornhub'),
     ('all', 'supjav'),
+    ('all', 'supjav2'),
     ('all', 'missav'),
 ]
 

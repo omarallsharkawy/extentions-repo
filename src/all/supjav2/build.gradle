@@ -1,12 +1,10 @@
 ext {
-    extName = 'SupJav'
-    extClass = '.SupJavFactory'
-    extVersionCode = 81
+    extName = 'SupJav 2'
+    extClass = '.SupJav2Factory'
+    extVersionCode = 6
     isNsfw = true
 }
-
 apply plugin: "kei.plugins.extension.legacy"
-
 dependencies {
     implementation(project(":lib:doodextractor"))
     implementation(project(":lib:mixdropextractor"))
