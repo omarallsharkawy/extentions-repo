@@ -25,7 +25,6 @@ import eu.kanade.tachiyomi.util.asJsoup
 import keiyoushi.lib.jsunpacker.JsUnpacker
 import keiyoushi.utils.bodyString
 import keiyoushi.utils.getPreferencesLazy
-import keiyoushi.utils.parallelCatchingFlatMapBlocking
 import keiyoushi.utils.useAsJsoup
 import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
@@ -53,7 +52,6 @@ class SupJav2(override val lang: String = "en") :
      */
     override fun headersBuilder() = super.headersBuilder()
         .set("Referer", "$baseUrl/")
-        .set("Origin", baseUrl)
         .set("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8")
         .set("Accept-Language", "en-US,en;q=0.9")
 
@@ -107,7 +105,14 @@ class SupJav2(override val lang: String = "en") :
         }
     }
 
-    override fun popularAnimeNextPageSelector() = "div.pagination li.active + li a, div.pagination a.next, div.pagination a[rel=next]"
+    /**
+     * SupJav has used both a `<div class="pagination">` and a WordPress
+     * `<nav class="navigation pagination">` over time.  Keep the selector
+     * broad enough for either markup; the parser below also checks the hrefs
+     * so a page-number link is only treated as a next page when it is ahead
+     * of the current request.
+     */
+    override fun popularAnimeNextPageSelector() = "a.next[href], a[rel=next][href], .pagination a.next[href], .pagination a[rel=next][href], .pagination li.active + li a[href], .page-numbers[href]"
 
     override fun popularAnimeParse(response: Response): AnimesPage {
         response.throwIfCloudflareChallenge()
@@ -117,7 +122,7 @@ class SupJav2(override val lang: String = "en") :
             document.select(popularAnimeSelector())
                 .map(::popularAnimeFromElement)
                 .distinctBy { it.url },
-            document.selectFirst(popularAnimeNextPageSelector()) != null,
+            hasNextPage(document, response.request.url),
         )
     }
 
@@ -137,12 +142,10 @@ class SupJav2(override val lang: String = "en") :
         val anime = document.select(latestUpdatesSelector())
             .map(::latestUpdatesFromElement)
             .distinctBy { it.url }
-        val path = response.request.url.encodedPath.trimEnd('/')
-        val landingPath = langPath.ifBlank { "/" }.trimEnd('/').ifBlank { "/" }
-        val hasNext = document.selectFirst(latestUpdatesNextPageSelector()) != null ||
-            (path.ifBlank { "/" } == landingPath && anime.isNotEmpty())
-
-        return AnimesPage(anime, hasNext)
+        // The site's home/latest route has no real pagination endpoint: its
+        // `/page/N` variants repeat the same mixed home feed. Only advertise
+        // a next page when the document contains a genuine forward link.
+        return AnimesPage(anime, hasNextPage(document, response.request.url))
     }
 
     // =============================== Search ===============================
@@ -185,6 +188,56 @@ class SupJav2(override val lang: String = "en") :
         }
 
         return AnimesPage(listOf(details), false)
+    }
+
+    /**
+     * Return true only when the pagination markup points past the page being
+     * parsed.  The site currently emits WordPress `page-numbers`, but older
+     * layouts used `li.active + li` and some pages expose only a `rel=next`
+     * link.  Looking at the target page number prevents the current/previous
+     * links from accidentally keeping infinite scrolling alive forever.
+     */
+    private fun hasNextPage(document: Document, requestUrl: okhttp3.HttpUrl): Boolean {
+        val currentPage = pageNumber(requestUrl)
+        val links = document.select(popularAnimeNextPageSelector())
+
+        if (links.any { link ->
+                val href = link.attr("href").trim()
+                if (href.isBlank() || href == "#" || link.hasClass("disabled")) {
+                    false
+                } else {
+                    val explicitNext = link.hasClass("next") ||
+                        link.attr("rel").equals("next", ignoreCase = true)
+                    if (!explicitNext) {
+                        false
+                    } else {
+                        val target = requestUrl.resolve(href)
+                        target != null && pageNumber(target) > currentPage
+                    }
+                }
+            }
+        ) {
+            return true
+        }
+
+        return links.mapNotNull { link ->
+            val href = link.attr("href").trim()
+            if (href.isBlank() || href == "#") return@mapNotNull null
+            val target = requestUrl.resolve(href) ?: return@mapNotNull null
+            pageNumber(target)
+        }.any { it > currentPage }
+    }
+
+    private fun pageNumber(url: okhttp3.HttpUrl): Int {
+        val pathPage = Regex("/page/(\\d+)(?:/|$)", RegexOption.IGNORE_CASE)
+            .find(url.encodedPath)
+            ?.groupValues
+            ?.getOrNull(1)
+            ?.toIntOrNull()
+        return pathPage
+            ?: url.queryParameter("paged")?.toIntOrNull()
+            ?: url.queryParameter("page")?.toIntOrNull()
+            ?: 1
     }
 
     override fun searchAnimeRequest(page: Int, query: String, filters: AnimeFilterList): Request {
@@ -239,7 +292,7 @@ class SupJav2(override val lang: String = "en") :
             document.select(searchAnimeSelector())
                 .map(::searchAnimeFromElement)
                 .distinctBy { it.url },
-            document.selectFirst(searchAnimeNextPageSelector()) != null,
+            hasNextPage(document, response.request.url),
         )
     }
 
@@ -342,9 +395,164 @@ class SupJav2(override val lang: String = "en") :
             }
             .distinctBy { it.id }
 
-        return players.parallelCatchingFlatMapBlocking(::videosFromPlayer)
+        if (players.isEmpty()) {
+            throw IOException("SupJav 2 returned no server buttons. Refresh the video page and retry.")
+        }
+
+        val videos = players
+            .flatMap { player -> videosFromPlayerBlocking(player) }
             .distinctBy { it.videoUrl }
+            // TurboVid's current "HLS" playlist is made of image-wrapped
+            // chunks that only its browser player can decode. Keep it as a
+            // fallback, but prefer standard HLS/MP4 hosts in native players.
+            .sortedBy { video -> if (video.quality.startsWith("TV", ignoreCase = true)) 1 else 0 }
+
+        if (videos.isEmpty()) {
+            throw IOException("SupJav 2 servers were found, but none returned a playable stream. Retry or open the video in WebView once.")
+        }
+        return videos
     }
+
+    /**
+     * This legacy API is called from host apps with different Kotlin runtime
+     * versions. Keep it blocking so R8 cannot turn suspend lambdas into an
+     * incompatible Function2 at runtime.
+     */
+    private fun videosFromPlayerBlocking(player: PlayerRequest): List<Video> {
+        val url = resolveProtectorRedirectBlocking(player.id) ?: return emptyList()
+        val hoster = when {
+            url.contains("turbovid", true) -> "TV"
+
+            url.contains("fc2stream", true) || url.contains("streamwish", true) ||
+                url.contains("fastshow", true) -> "FST"
+
+            url.contains("streamtape", true) -> "ST"
+
+            url.contains("voe", true) -> "VOE"
+
+            url.contains("dood", true) || url.contains("ds2play", true) -> "DOOD"
+
+            url.contains("mixdrop", true) -> "MIXDROP"
+
+            else -> player.label
+        }
+
+        return runCatching {
+            when (hoster) {
+                "TV" -> extractTvVideosBlocking(url, player.pageReferer)
+                "ST" -> streamtapeExtractor.videosFromUrl(url)
+                "DOOD" -> doodExtractor.videosFromUrl(url)
+                "MIXDROP" -> mixdropExtractor.videosFromUrl(url)
+                else -> extractPackedHlsBlocking(url, player.pageReferer, hoster)
+            }
+        }.getOrDefault(emptyList())
+    }
+
+    private fun resolveProtectorRedirectBlocking(id: String): String? {
+        if (id.isBlank()) return null
+        if (id.startsWith("//")) return "https:$id"
+        if (id.startsWith("http://") || id.startsWith("https://")) {
+            if (!id.contains("supjav", true)) return id
+            return fetchRedirectBlocking(id)
+        }
+        return fetchRedirectBlocking(id.reversed()) ?: fetchRedirectBlocking(id)
+    }
+
+    private fun fetchRedirectBlocking(code: String): String? = runCatching {
+        val targetUrl = if (
+            code.startsWith("http://") ||
+            code.startsWith("https://") ||
+            code.contains("supjav.php")
+        ) {
+            code
+        } else {
+            "$PROTECTOR_URL/supjav.php?c=$code"
+        }
+        noRedirectClient.newCall(GET(targetUrl, protectorHeaders)).execute().use { response ->
+            response.throwIfCloudflareChallenge()
+            response.header("Location")?.trim()?.takeIf(String::isNotBlank)
+                ?.let { response.request.url.resolve(it)?.toString() }
+        }
+    }.getOrNull()
+
+    private fun extractTvVideosBlocking(url: String, pageReferer: String): List<Video> {
+        val body = client.newCall(GET(url, embedHeaders(pageReferer))).execute().use {
+            it.throwIfCloudflareChallenge()
+            it.body.string()
+        }.replace("\\/", "/")
+        val document = Jsoup.parse(body, url)
+        val rawPlaylist = TV_URL_PLAY_REGEX.find(body)?.groupValues?.get(1)
+            ?: TV_DATA_HASH_REGEX.find(body)?.groupValues?.get(1)
+            ?: document.selectFirst("source[src*=m3u8], video[src*=m3u8]")?.attr("src")
+            ?: TV_FILE_URL_REGEX.find(body)?.groupValues?.get(1)
+            ?: FST_M3U8_REGEX.find(body)?.value
+            ?: return emptyList()
+        val playlist = normalizePlayerUrl(rawPlaylist, url) ?: return emptyList()
+        if (isBrowserWrappedTvPlaylist(playlist, url)) return emptyList()
+        return listOf(Video(playlist, "TV - HLS", playlist, headers = playbackHeaders(url)))
+    }
+
+    /**
+     * TurboVid sometimes publishes an M3U8 whose media entries are PNG files.
+     * Its web player unwraps them with site JavaScript, while ExoPlayer/mpv see
+     * PNG tracks and fail. Suppress only that browser-only form; normal HLS is
+     * still returned automatically when the host switches back to it.
+     */
+    private fun isBrowserWrappedTvPlaylist(
+        playlist: String,
+        referer: String,
+        depth: Int = 0,
+    ): Boolean = runCatching {
+        client.newCall(GET(playlist, playbackHeaders(referer))).execute().use { response ->
+            if (!response.isSuccessful) return@use false
+            val mediaUrls = response.body.string()
+                .lineSequence()
+                .map(String::trim)
+                .filter { it.isNotBlank() && !it.startsWith("#") }
+                .toList()
+            mediaUrls.any { mediaUrl ->
+                mediaUrl.contains("tiktokcdn.com", ignoreCase = true) ||
+                    mediaUrl.substringBefore('?').endsWith(".image", ignoreCase = true)
+            } ||
+                (
+                    depth < 2 &&
+                        mediaUrls
+                            .filter { it.substringBefore('?').endsWith(".m3u8", ignoreCase = true) }
+                            .any { child -> isBrowserWrappedTvPlaylist(child, playlist, depth + 1) }
+                    )
+        }
+    }.getOrDefault(false)
+
+    private fun extractPackedHlsBlocking(
+        url: String,
+        pageReferer: String,
+        label: String,
+    ): List<Video> {
+        val response = client.newCall(GET(url, embedHeaders(pageReferer))).execute()
+        val body = response.use {
+            it.throwIfCloudflareChallenge()
+            it.body.string()
+        }
+        val scripts = Jsoup.parse(body, url).select("script").joinToString("\n") { script ->
+            val data = script.data()
+            if ("eval(function(p,a,c" in data) {
+                runCatching { JsUnpacker.unpackAndCombine(data) }.getOrNull() ?: data
+            } else {
+                data
+            }
+        }.replace("\\/", "/").replace("\\u0026", "&")
+        val playlist = FST_M3U8_REGEX.find(scripts)?.value
+            ?.let { normalizePlayerUrl(it, url) }
+            ?: return emptyList()
+        if (!isReachableHlsPlaylist(playlist, url)) return emptyList()
+        return listOf(Video(playlist, "$label - HLS", playlist, headers = playbackHeaders(url)))
+    }
+
+    private fun isReachableHlsPlaylist(playlist: String, referer: String): Boolean = runCatching {
+        client.newCall(GET(playlist, playbackHeaders(referer))).execute().use { response ->
+            response.isSuccessful && response.body.string().startsWith("#EXTM3U")
+        }
+    }.getOrDefault(false)
 
     private fun cleanServerLabel(text: String): String {
         val clean = text.trim().uppercase()
@@ -485,8 +693,10 @@ class SupJav2(override val lang: String = "en") :
 
         val document = Jsoup.parse(body, url)
         val rawPlaylist = TV_URL_PLAY_REGEX.find(body)?.groupValues?.get(1)
+            ?: TV_DATA_HASH_REGEX.find(body)?.groupValues?.get(1)
             ?: document.selectFirst("source[src*=m3u8], video[src*=m3u8]")?.attr("src")
             ?: TV_FILE_URL_REGEX.find(body)?.groupValues?.get(1)
+            ?: FST_M3U8_REGEX.find(body)?.value
             ?: return emptyList()
         val playlistUrl = normalizePlayerUrl(rawPlaylist, url) ?: return emptyList()
         val playerHeaders = playbackHeaders(url)
@@ -538,23 +748,15 @@ class SupJav2(override val lang: String = "en") :
         ).distinctBy { it.videoUrl }
     }
 
-    private fun playbackHeaders(referer: String): okhttp3.Headers {
-        val pageUrl = referer.toHttpUrlOrNull()
-        val origin = pageUrl?.let { "${it.scheme}://${it.host}" } ?: baseUrl
-        return headers.newBuilder()
-            .set("Referer", referer)
-            .set("Origin", origin)
-            .build()
-    }
+    private fun playbackHeaders(referer: String): okhttp3.Headers = headers.newBuilder()
+        .set("Referer", referer)
+        .removeAll("Origin")
+        .build()
 
-    private fun embedHeaders(pageReferer: String): okhttp3.Headers {
-        val pageUrl = pageReferer.toHttpUrlOrNull()
-        val origin = pageUrl?.let { "${it.scheme}://${it.host}" } ?: baseUrl
-        return headers.newBuilder()
-            .set("Referer", pageReferer)
-            .set("Origin", origin)
-            .build()
-    }
+    private fun embedHeaders(pageReferer: String): okhttp3.Headers = headers.newBuilder()
+        .set("Referer", pageReferer)
+        .removeAll("Origin")
+        .build()
 
     private fun normalizePlayerUrl(rawUrl: String, pageUrl: String): String? {
         val clean = rawUrl.trim().trim('"', '\'')
@@ -637,6 +839,8 @@ class SupJav2(override val lang: String = "en") :
             Regex("""<title>\s*(?:just a moment|attention required)[^<]*</title>""", RegexOption.IGNORE_CASE)
         private val TV_URL_PLAY_REGEX =
             Regex("""\b(?:(?:var|let|const)\s+)?urlPlay\s*=\s*["']([^"']+)["']""", RegexOption.IGNORE_CASE)
+        private val TV_DATA_HASH_REGEX =
+            Regex("""\bdata-hash\s*=\s*["']([^"']+\.m3u8[^"']*)["']""", RegexOption.IGNORE_CASE)
         private val TV_FILE_URL_REGEX =
             Regex("""\bfile\s*:\s*["'](https?://[^"']+\.m3u8[^"']*)["']""", RegexOption.IGNORE_CASE)
         private val FST_M3U8_REGEX =

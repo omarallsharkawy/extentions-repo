@@ -1,7 +1,7 @@
 ext {
     extName = 'SexTB'
     extClass = '.SexTBFactory'
-    extVersionCode = 14
+    extVersionCode = 15
     isNsfw = true
 }
 
@@ -16,4 +16,5 @@ dependencies {
     implementation(project(":lib:vidhideextractor"))
     implementation(project(":lib:voeextractor"))
     implementation(project(":lib:playlistutils"))
+    implementation(project(":lib:unpacker"))
 }

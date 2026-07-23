@@ -20,8 +20,8 @@ import eu.kanade.tachiyomi.network.GET
 import eu.kanade.tachiyomi.network.POST
 import eu.kanade.tachiyomi.network.await
 import eu.kanade.tachiyomi.util.asJsoup
+import keiyoushi.lib.autoUnpacker
 import keiyoushi.utils.bodyString
-import keiyoushi.utils.parallelCatchingFlatMapBlocking
 import okhttp3.FormBody
 import okhttp3.Headers
 import okhttp3.HttpUrl.Companion.toHttpUrl
@@ -56,7 +56,6 @@ class SexTB : ParsedAnimeHttpSource() {
      */
     override fun headersBuilder(): Headers.Builder = super.headersBuilder()
         .set("Referer", "$baseUrl/")
-        .set("Origin", baseUrl)
         .set("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8")
         .set("Accept-Language", "en-US,en;q=0.9")
 
@@ -297,13 +296,17 @@ class SexTB : ParsedAnimeHttpSource() {
 
         val playerButtons = document.select("button.btn-player.episode[data-id], button.btn-player[data-id]:not(.vip)")
             .distinctBy { it.attr("data-id") }
-        if (playerButtons.isEmpty()) return emptyList()
+        if (playerButtons.isEmpty()) {
+            throw IOException("SexTB returned no server buttons. Refresh the video page and retry.")
+        }
 
         val pageHtml = document.html()
         val initialToken = PT_REGEX.find(pageHtml)?.groupValues?.get(1).orEmpty()
         val initialKey = PK_REGEX.find(pageHtml)?.groupValues?.get(1).orEmpty()
         val fallbackFilmId = FILM_ID_REGEX.find(pageHtml)?.groupValues?.get(1).orEmpty()
-        if (initialToken.isBlank() || initialKey.isBlank()) return emptyList()
+        if (initialToken.isBlank() || initialKey.isBlank()) {
+            throw IOException("SexTB player tokens are missing. Open this video in WebView once, then retry.")
+        }
 
         var token = initialToken
         var key = initialKey
@@ -328,11 +331,134 @@ class SexTB : ParsedAnimeHttpSource() {
             }
         }
 
-        return resolvedPlayers
+        if (resolvedPlayers.isEmpty()) {
+            throw IOException("SexTB could not resolve any server. Open the video in WebView once, then retry.")
+        }
+
+        val prioritizedPlayers = resolvedPlayers
             .distinctBy { it.url }
-            .parallelCatchingFlatMapBlocking { extractVideos(it, mutableSetOf(), 0) }
+            .sortedBy { serverPriority(it.label) }
+
+        val videos = prioritizedPlayers
+            .flatMap { extractVideosBlocking(it, mutableSetOf(), 0) }
             .distinctBy { it.videoUrl }
             .sortedBy { serverPriority(it.quality) }
+
+        if (videos.isEmpty()) {
+            throw IOException("SexTB servers were found, but none returned a playable stream. Retry or open the video in WebView once.")
+        }
+        return videos
+    }
+
+    /**
+     * Keep the legacy videoListParse path synchronous. Some host apps load
+     * minified extensions with a different Kotlin coroutine runtime, which
+     * turns runBlocking/suspend lambdas into a Function2 ClassCastException.
+     * Returning the master HLS URL is sufficient for ExoPlayer and avoids
+     * that runtime boundary entirely.
+     */
+    private fun extractVideosBlocking(
+        target: PlayerTarget,
+        visited: MutableSet<String>,
+        depth: Int,
+    ): List<Video> {
+        if (depth > MAX_PLAYER_DEPTH || !visited.add(target.url)) return emptyList()
+        val lowerUrl = target.url.lowercase()
+        val label = normalizeServerLabel(target.label, lowerUrl)
+        val videoHeaders = headersFor(target.referer)
+
+        if (".m3u8" in lowerUrl) {
+            return listOf(Video(target.url, "$label - HLS", target.url, headers = videoHeaders))
+        }
+        if (lowerUrl.substringBefore('?').endsWith(".mp4")) {
+            return listOf(Video(target.url, "$label - MP4", target.url, headers = videoHeaders))
+        }
+
+        val extractorVideos = runCatching {
+            when (label) {
+                "DD" -> doodExtractor.videosFromUrl(target.url, quality = "DD")
+                "ST" -> streamTapeExtractor.videosFromUrl(target.url)
+                "MD" -> mixDropExtractor.videosFromUrl(target.url)
+                "UPN", "US" -> extractUpnVideosBlocking(target)
+                else -> emptyList()
+            }
+        }.getOrDefault(emptyList())
+        if (extractorVideos.isNotEmpty()) return extractorVideos
+
+        return runCatching {
+            client.newCall(GET(target.url, videoHeaders)).execute().use { response ->
+                response.throwIfCloudflareChallenge()
+                val finalUrl = response.request.url.toString()
+                val body = response.body.string().replace("\\/", "/").replace("\\u0026", "&")
+                val document = Jsoup.parse(body, finalUrl)
+                val scripts = document.select("script").joinToString("\n") { script ->
+                    val data = script.data()
+                    if ("eval(function(p,a,c" in data) autoUnpacker(data) ?: data else data
+                }
+                val rawPlaylist = M3U8_URL_REGEX.find(scripts)?.value
+                    ?: document.selectFirst("[data-hash*=m3u8]")?.attr("data-hash")
+                    ?: document.selectFirst("source[src*=m3u8], video[src*=m3u8]")?.attr("src")
+                val playlist = rawPlaylist?.let { normalizePlayerUrl(it, finalUrl) }
+                if (playlist != null) {
+                    return@use listOf(
+                        Video(
+                            playlist,
+                            "$label - HLS",
+                            playlist,
+                            headers = headersFor(finalUrl),
+                        ),
+                    )
+                }
+
+                val nested = extractPlayerUrls(body, finalUrl)
+                    .firstOrNull { it != target.url && it.startsWith("http") }
+                    ?: return@use emptyList()
+                extractVideosBlocking(
+                    PlayerTarget(normalizeServerLabel(label, nested.lowercase()), nested, finalUrl),
+                    visited,
+                    depth + 1,
+                )
+            }
+        }.getOrDefault(emptyList())
+    }
+
+    private fun extractUpnVideosBlocking(target: PlayerTarget): List<Video> {
+        val playerUrl = target.url.toHttpUrlOrNull() ?: return emptyList()
+        val videoId = playerUrl.fragment?.substringBefore('&')?.trim().orEmpty()
+        if (videoId.isBlank()) return emptyList()
+        val playerPageUrl = playerUrl.newBuilder().fragment(null).query(null).build().toString()
+        val playerHeaders = headersFor(playerPageUrl)
+        val referrerHost = target.referer.toHttpUrlOrNull()?.host.orEmpty()
+        val apiUrl = playerUrl.newBuilder()
+            .encodedPath("/api/v1/video")
+            .query(null)
+            .fragment(null)
+            .addQueryParameter("id", videoId)
+            .addQueryParameter("w", "1920")
+            .addQueryParameter("h", "1080")
+            .apply { if (referrerHost.isNotBlank()) addQueryParameter("r", referrerHost) }
+            .build()
+        val encrypted = client.newCall(GET(apiUrl, playerHeaders)).execute().use {
+            it.throwIfCloudflareChallenge()
+            it.body.string().trim()
+        }
+        val payload = decryptUpnPayload(encrypted) ?: return emptyList()
+        val data = runCatching { JSONObject(payload) }.getOrNull() ?: return emptyList()
+        val playlist = listOf("cfNative", "source", "cf")
+            .map { data.optString(it).trim() }
+            .firstOrNull { it.startsWith("http", true) && ".m3u8" in it.lowercase() }
+            ?: return emptyList()
+        return listOf(Video(playlist, "US - HLS", playlist, headers = playerHeaders))
+    }
+
+    private fun normalizePlayerUrl(rawUrl: String, pageUrl: String): String? {
+        val clean = rawUrl.trim().trim('"', '\'')
+        if (clean.isBlank()) return null
+        return when {
+            clean.startsWith("//") -> "https:$clean"
+            clean.startsWith("http://") || clean.startsWith("https://") -> clean
+            else -> pageUrl.toHttpUrlOrNull()?.resolve(clean)?.toString()
+        }
     }
 
     private fun fetchPlayerPayload(
@@ -545,6 +671,9 @@ class SexTB : ParsedAnimeHttpSource() {
     private fun normalizeServerLabel(label: String, url: String = ""): String {
         val clean = label.trim().uppercase()
         return when {
+            "ryderjet" in url || "callistanise" in url || "vidhide" in url ||
+                "streamhide" in url || "streamp2p" in url || "strp2p" in url -> "PP"
+
             "streamwish" in url || "strwish" in url || "embedwish" in url ||
                 "faststream" in url || "filelions" in url || clean in setOf("SW", "FL") -> clean.ifBlank { "SW" }
 
@@ -571,13 +700,10 @@ class SexTB : ParsedAnimeHttpSource() {
         }
     }
 
-    private fun headersFor(referer: String): Headers {
-        val origin = referer.toHttpUrlOrNull()?.let { "${it.scheme}://${it.host}" } ?: baseUrl
-        return headers.newBuilder()
-            .set("Referer", referer)
-            .set("Origin", origin)
-            .build()
-    }
+    private fun headersFor(referer: String): Headers = headers.newBuilder()
+        .set("Referer", referer)
+        .removeAll("Origin")
+        .build()
 
     private fun normalizeUrl(rawUrl: String): String? {
         val clean = rawUrl.trim().trim('"', '\'')
@@ -674,6 +800,8 @@ class SexTB : ParsedAnimeHttpSource() {
         private val PK_REGEX = Regex("""window\.__pk\s*=\s*["']([^"']+)""")
         private val FILM_ID_REGEX = Regex("""(?:var|let|const)\s+filmId\s*=\s*(\d+)""")
         private val PLAYER_URL_REGEX = Regex("""(?:https?:)?//[^\s"'<>\\]+""", RegexOption.IGNORE_CASE)
+        private val M3U8_URL_REGEX =
+            Regex("""https?://[^\s"'<>\\]+\.m3u8[^\s"'<>\\]*""", RegexOption.IGNORE_CASE)
         private val UPN_HEX_REGEX = Regex("""[0-9a-fA-F]+""")
 
         private val CATEGORIES = arrayOf(
