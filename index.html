@@ -1,293 +1,368 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="en">
 <head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Local AR+EN+ALL Extensions (14.x)</title>
-  <meta name="description" content="Install anime extensions for Aniyomi / Tadami / Anikku" />
-  <link rel="stylesheet" href="styles.css" />
-  <script src="config.js"></script>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#0b0d12">
+  <meta name="description" content="Add Omar's AR, EN, and ALL Aniyomi extension repository, or browse its APK catalog.">
+  <title>Omar Extensions — Aniyomi repository</title>
+  <link rel="stylesheet" href="styles.css">
+  <script src="config.js?v=2"></script>
 </head>
 <body>
-  <div class="wrap">
-    <header>
-      <h1>Local AR+EN+ALL Extensions</h1>
-      <p class="sub">
-        Aniyomi / Tadami / Anikku compatible repo · lib <strong>14.x</strong> ·
-        <span id="ext-count">…</span> extensions (AR · EN · ALL)
-      </p>
-    </header>
+  <a class="skip-link" href="#catalog">Skip to extension catalog</a>
 
-    <div id="host-alert" class="alert" hidden>
-      <strong>Set your public URL</strong> so Automatic install works on a phone.
-      Edit <code>config.js</code> and set <code>window.REPO_BASE_URL</code> to your
-      GitHub Pages (or other HTTPS) origin, e.g.
-      <code>https://youruser.github.io/aniyomi-local-extensions</code>,
-      then re-open this page. Local file preview still works for browsing downloads.
+  <header class="site-header">
+    <div class="shell header-inner">
+      <a class="brand" href="./" aria-label="Omar Extensions home">
+        <span class="brand-mark" aria-hidden="true">OE</span>
+        <span>Omar Extensions</span>
+      </a>
+      <a class="header-link" href="https://github.com/omarallsharkawy/extentions-repo">View source</a>
     </div>
+  </header>
 
-    <!-- Automatic installation -->
-    <section id="automatic">
-      <h2><span class="icon">🔗</span> Automatic installation</h2>
-      <p>Open this on your Android device with Aniyomi (or a compatible fork) installed.</p>
-      <div class="btn-row">
-        <a id="btn-aniyomi" class="btn-install" href="#">Click here to install repo</a>
-        <a id="btn-tadami" class="btn-secondary" href="#" title="Tadami / Anikku deep link if supported">Tadami / Anikku link</a>
+  <main>
+    <section class="hero shell" aria-labelledby="hero-title">
+      <div class="hero-copy">
+        <p class="eyebrow">ANIYOMI REPOSITORY · LIB 14.X</p>
+        <h1 id="hero-title">Your extension catalog, ready in one tap.</h1>
+        <p class="lede">
+          Add the maintained AR, EN, and ALL catalog to Aniyomi or a compatible Tadami build.
+          The app opens its own confirmation screen before adding the repository.
+        </p>
+        <p class="arabic" lang="ar" dir="rtl">
+          افتح المستودع داخل التطبيق بنقرة واحدة، ثم وافق على الإضافة من شاشة التأكيد.
+        </p>
+
+        <div class="hero-actions">
+          <a id="open-app" class="button button-primary" href="#" aria-describedby="install-note">
+            Open in Aniyomi / Tadami
+          </a>
+          <button id="copy-primary" class="button button-secondary" type="button">
+            Copy repository URL
+          </button>
+        </div>
+        <p id="install-note" class="fine-print">
+          Android only. Nothing is installed or trusted silently; app and system confirmations still apply.
+        </p>
       </div>
-      <p class="hint" style="margin-top:0.85rem">
-        If the button does nothing, use <strong>Manual installation</strong> below.
-      </p>
+
+      <aside class="repo-summary" aria-label="Repository status">
+        <div class="summary-heading">
+          <span class="status-dot" aria-hidden="true"></span>
+          <span id="catalog-status">Checking catalog…</span>
+        </div>
+        <dl>
+          <div>
+            <dt>Extensions</dt>
+            <dd id="extension-count">—</dd>
+          </div>
+          <div>
+            <dt>Languages</dt>
+            <dd>AR · EN · ALL</dd>
+          </div>
+          <div>
+            <dt>APK location</dt>
+            <dd><code>/apk</code></dd>
+          </div>
+          <div>
+            <dt>Index</dt>
+            <dd><code>index.min.json</code></dd>
+          </div>
+        </dl>
+      </aside>
     </section>
 
-    <!-- Manual installation -->
-    <section id="manual">
-      <h2>Manual installation</h2>
-      <p>
-        Add the following link under
-        <strong>Settings → Browse → Anime extension repos</strong>
-        (Aniyomi) or
-        <strong>More → Settings → Browse → Extension Stores (Anime)</strong>
-        (Tadami).
-      </p>
-      <div class="url-box">
-        <code id="repo-url">…</code>
-        <button type="button" id="btn-copy" title="Copy">⧉</button>
+    <section class="install-band">
+      <div class="shell install-grid">
+        <div>
+          <p class="section-kicker">Manual fallback</p>
+          <h2>Use the same verified URL in either app.</h2>
+          <p>
+            If the button above does not open your app, copy this URL and paste it into the
+            Anime extension repository settings.
+          </p>
+        </div>
+        <div>
+          <div class="url-field">
+            <code id="repo-url">Loading…</code>
+            <button id="copy-url" type="button" aria-label="Copy repository URL">Copy</button>
+          </div>
+          <p class="path-help">
+            Aniyomi: Settings → Browse → Anime extension repos<br>
+            Tadami: More → Settings → Browse → Extension Stores (Anime)
+          </p>
+        </div>
       </div>
-      <p class="hint">Same URL works for both apps. Trust the extension after install if prompted.</p>
     </section>
 
-    <!-- Usage -->
-    <section id="usage">
-      <h2>Usage</h2>
-      <p>
-        Extension sources can be downloaded, installed, and uninstalled via the main app.
-        They are installed and uninstalled like regular apps, in
-        <code class="badge badge-lang" style="margin:0;border-radius:4px;padding:0.1rem 0.35rem">.apk</code>
-        format.
-      </p>
-      <p class="hint">
-        Flow: add repo → <strong>Browse → Extensions</strong> → install → open
-        <strong>Sources</strong> → Popular / Latest / Search → play.
-      </p>
+    <section class="steps shell" aria-labelledby="steps-title">
+      <div class="section-heading">
+        <p class="section-kicker">From repository to playback</p>
+        <h2 id="steps-title">Three deliberate steps</h2>
+      </div>
+      <ol class="step-list">
+        <li>
+          <span class="step-number" aria-hidden="true">01</span>
+          <strong>Add the repository</strong>
+          <span>Use the app link or paste the URL manually.</span>
+        </li>
+        <li>
+          <span class="step-number" aria-hidden="true">02</span>
+          <strong>Install an extension</strong>
+          <span>Choose it from Browse → Anime Extensions and approve Android’s prompt.</span>
+        </li>
+        <li>
+          <span class="step-number" aria-hidden="true">03</span>
+          <strong>Open a source</strong>
+          <span>Browse, search, open details, and select an available video server.</span>
+        </li>
+      </ol>
     </section>
 
-    <!-- Downloads -->
-    <section id="downloads">
-      <h2>Downloads</h2>
-      <p class="stats" id="dl-stats">Loading index…</p>
-      <div class="filters">
-        <input type="search" id="filter-q" placeholder="Search name, package, lang…" autocomplete="off" />
-        <select id="filter-lang">
-          <option value="">All languages</option>
-          <option value="all">all</option>
-          <option value="en">en</option>
-          <option value="ar">ar</option>
-        </select>
-        <select id="filter-nsfw">
-          <option value="">NSFW: any</option>
-          <option value="0">SFW only</option>
-          <option value="1">NSFW only</option>
-        </select>
+    <section id="catalog" class="catalog shell" aria-labelledby="catalog-title">
+      <div class="catalog-header">
+        <div>
+          <p class="section-kicker">Published builds</p>
+          <h2 id="catalog-title">Extension catalog</h2>
+        </div>
+        <p id="result-count" class="result-count" aria-live="polite">Loading index…</p>
       </div>
-      <div class="table-wrap">
+
+      <div class="filters" role="search">
+        <label class="search-field">
+          <span class="sr-only">Search extensions</span>
+          <input id="filter-query" type="search" placeholder="Search by name, package, or language" autocomplete="off">
+        </label>
+        <label>
+          <span class="sr-only">Filter by language</span>
+          <select id="filter-language">
+            <option value="">All languages</option>
+            <option value="all">ALL</option>
+            <option value="ar">AR</option>
+            <option value="en">EN</option>
+          </select>
+        </label>
+        <label>
+          <span class="sr-only">Filter by content rating</span>
+          <select id="filter-rating">
+            <option value="">Any rating</option>
+            <option value="0">SFW only</option>
+            <option value="1">NSFW only</option>
+          </select>
+        </label>
+      </div>
+
+      <div class="table-frame">
         <table>
           <thead>
             <tr>
-              <th>Name</th>
-              <th>Lang</th>
-              <th>Version</th>
-              <th>Download</th>
+              <th scope="col">Extension</th>
+              <th scope="col">Language</th>
+              <th scope="col">Version</th>
+              <th scope="col"><span class="sr-only">Download</span></th>
             </tr>
           </thead>
-          <tbody id="dl-body">
-            <tr><td colspan="4">Loading…</td></tr>
+          <tbody id="catalog-body">
+            <tr><td colspan="4" class="empty-state">Loading the signed catalog…</td></tr>
           </tbody>
         </table>
       </div>
     </section>
+  </main>
 
-    <footer>
-      Built from local <code>anime-extensions</code> (AR + EN + ALL).
-      Not affiliated with Aniyomi, Tadami, or Secozzi.
-      Host this folder over <strong>HTTPS</strong> for one-tap install.
-    </footer>
-  </div>
+  <footer class="site-footer">
+    <div class="shell footer-grid">
+      <p>
+        Independent extension repository. Not affiliated with Aniyomi, Tadami, or any content host.
+        Use third-party sources lawfully.
+      </p>
+      <a href="https://github.com/omarallsharkawy/extentions-repo">GitHub repository</a>
+    </div>
+  </footer>
 
-  <div class="toast" id="toast">Copied</div>
+  <div id="toast" class="toast" role="status" aria-live="polite" aria-atomic="true"></div>
 
   <script>
-    (function () {
-      const base =
-        (window.REPO_BASE_URL && String(window.REPO_BASE_URL).replace(/\/$/, "")) ||
-        (location.protocol === "file:" ? "" : location.origin + location.pathname.replace(/\/?index\.html?$/i, "").replace(/\/$/, ""));
-
+    (() => {
+      const configuredBase = String(window.REPO_BASE_URL || "").replace(/\/$/, "");
+      const localBase = location.protocol === "file:"
+        ? ""
+        : location.origin + location.pathname.replace(/\/?index\.html?$/i, "").replace(/\/$/, "");
+      const isLocalPreview = /^(localhost|127\.0\.0\.1)$/i.test(location.hostname);
+      const base = isLocalPreview ? localBase : (configuredBase || localBase);
       const indexUrl = base
-        ? base + "/index.min.json"
+        ? `${base}/index.min.json`
         : new URL("index.min.json", location.href).href;
 
-      const repoUrlEl = document.getElementById("repo-url");
-      const btnAniyomi = document.getElementById("btn-aniyomi");
-      const btnTadami = document.getElementById("btn-tadami");
-      const hostAlert = document.getElementById("host-alert");
-      const toast = document.getElementById("toast");
+      const elements = {
+        openApp: document.getElementById("open-app"),
+        repoUrl: document.getElementById("repo-url"),
+        toast: document.getElementById("toast"),
+        status: document.getElementById("catalog-status"),
+        count: document.getElementById("extension-count"),
+        resultCount: document.getElementById("result-count"),
+        body: document.getElementById("catalog-body"),
+        query: document.getElementById("filter-query"),
+        language: document.getElementById("filter-language"),
+        rating: document.getElementById("filter-rating"),
+      };
 
-      function showToast(msg) {
-        toast.textContent = msg || "Copied";
-        toast.classList.add("show");
-        setTimeout(() => toast.classList.remove("show"), 1600);
+      const appUrl = `aniyomi://add-repo?url=${encodeURIComponent(indexUrl)}`;
+      elements.openApp.href = appUrl;
+      elements.repoUrl.textContent = indexUrl;
+
+      let catalog = [];
+      let toastTimer;
+
+      function showToast(message) {
+        clearTimeout(toastTimer);
+        elements.toast.textContent = message;
+        elements.toast.classList.add("is-visible");
+        toastTimer = setTimeout(() => elements.toast.classList.remove("is-visible"), 2200);
       }
 
-      function setInstallLinks(url) {
-        repoUrlEl.textContent = url;
-        const enc = encodeURIComponent(url);
-        // Aniyomi / most anime forks
-        btnAniyomi.href = "aniyomi://add-repo?url=" + enc;
-        // Tadami / Anikku often accept the same or anikku scheme
-        btnTadami.href = "anikku://add-repo?url=" + enc;
-        btnTadami.onclick = function (e) {
-          // fallback: also try aniyomi if anikku not handled
-          setTimeout(function () {
-            /* user can use manual URL */
-          }, 0);
-        };
-
-        const isPublicHttps = /^https:\/\//i.test(url) && !/localhost|127\.0\.0\.1/i.test(url);
-        if (!isPublicHttps) {
-          hostAlert.hidden = false;
-          if (!base) {
-            btnAniyomi.classList.add("is-disabled");
-            btnTadami.classList.add("is-disabled");
-          }
-        }
-      }
-
-      setInstallLinks(indexUrl);
-
-      document.getElementById("btn-copy").addEventListener("click", async () => {
-        const text = repoUrlEl.textContent.trim();
+      async function copyRepositoryUrl() {
         try {
-          await navigator.clipboard.writeText(text);
-          showToast("URL copied");
+          await navigator.clipboard.writeText(indexUrl);
         } catch {
-          const ta = document.createElement("textarea");
-          ta.value = text;
-          document.body.appendChild(ta);
-          ta.select();
+          const textarea = document.createElement("textarea");
+          textarea.value = indexUrl;
+          textarea.setAttribute("readonly", "");
+          textarea.className = "clipboard-fallback";
+          document.body.appendChild(textarea);
+          textarea.select();
           document.execCommand("copy");
-          ta.remove();
-          showToast("URL copied");
+          textarea.remove();
         }
-      });
-
-      let allExt = [];
-
-      function apkHref(apkPath) {
-        if (/^https?:\/\//i.test(apkPath)) return apkPath;
-        if (base) return base + "/" + apkPath.replace(/^\//, "");
-        return apkPath; // relative
+        showToast("Repository URL copied");
       }
 
-      function iconHref(pkg) {
-        if (!pkg) return "";
-        const rel = "icon/" + pkg + ".png";
-        if (base) return base + "/" + rel;
-        return rel;
+      function relativeAsset(folder, value) {
+        if (/^https?:\/\//i.test(value || "")) return value;
+        const filename = String(value || "").replace(/\\/g, "/").split("/").pop();
+        return base ? `${base}/${folder}/${filename}` : `${folder}/${filename}`;
+      }
+
+      function extensionRow(extension) {
+        const row = document.createElement("tr");
+
+        const nameCell = document.createElement("td");
+        nameCell.className = "extension-cell";
+        const icon = document.createElement("img");
+        icon.className = "extension-icon";
+        icon.src = relativeAsset("icon", `${extension.pkg}.png`);
+        icon.alt = "";
+        icon.width = 36;
+        icon.height = 36;
+        icon.loading = "lazy";
+        icon.addEventListener("error", () => icon.classList.add("is-missing"));
+
+        const nameBlock = document.createElement("span");
+        nameBlock.className = "extension-name";
+        const name = document.createElement("strong");
+        name.textContent = String(extension.name || "").replace(/^Aniyomi:\s*/i, "");
+        nameBlock.appendChild(name);
+        if (extension.nsfw) {
+          const badge = document.createElement("span");
+          badge.className = "rating-badge";
+          badge.textContent = "NSFW";
+          nameBlock.appendChild(badge);
+        }
+        const pkg = document.createElement("small");
+        pkg.textContent = extension.pkg || "";
+        nameBlock.appendChild(pkg);
+        nameCell.append(icon, nameBlock);
+
+        const languageCell = document.createElement("td");
+        languageCell.dataset.label = "Language";
+        languageCell.textContent = String(extension.lang || "—").toUpperCase();
+
+        const versionCell = document.createElement("td");
+        versionCell.dataset.label = "Version";
+        versionCell.textContent = extension.version || String(extension.code || "—");
+
+        const downloadCell = document.createElement("td");
+        downloadCell.className = "download-cell";
+        const download = document.createElement("a");
+        download.className = "download-link";
+        download.href = relativeAsset("apk", extension.apk);
+        download.textContent = "Download APK";
+        download.setAttribute("download", "");
+        downloadCell.appendChild(download);
+
+        row.append(nameCell, languageCell, versionCell, downloadCell);
+        return row;
       }
 
       function render() {
-        const q = document.getElementById("filter-q").value.trim().toLowerCase();
-        const lang = document.getElementById("filter-lang").value;
-        const nsfw = document.getElementById("filter-nsfw").value;
-        const body = document.getElementById("dl-body");
-        const filtered = allExt.filter((e) => {
-          if (lang && e.lang !== lang) return false;
-          if (nsfw !== "" && String(e.nsfw) !== nsfw) return false;
-          if (!q) return true;
-          const hay = [e.name, e.pkg, e.lang, e.version, e.apk].join(" ").toLowerCase();
-          return hay.includes(q);
+        const query = elements.query.value.trim().toLowerCase();
+        const language = elements.language.value;
+        const rating = elements.rating.value;
+        const visible = catalog.filter((extension) => {
+          if (language && extension.lang !== language) return false;
+          if (rating !== "" && String(extension.nsfw) !== rating) return false;
+          if (!query) return true;
+          return [extension.name, extension.pkg, extension.lang, extension.version, extension.apk]
+            .join(" ")
+            .toLowerCase()
+            .includes(query);
         });
 
-        document.getElementById("dl-stats").textContent =
-          "Showing " + filtered.length + " of " + allExt.length + " extensions";
-
-        if (!filtered.length) {
-          body.innerHTML = '<tr><td colspan="4">No matches</td></tr>';
+        elements.resultCount.textContent = `${visible.length} of ${catalog.length} extensions`;
+        elements.body.replaceChildren();
+        if (!visible.length) {
+          const row = document.createElement("tr");
+          const cell = document.createElement("td");
+          cell.colSpan = 4;
+          cell.className = "empty-state";
+          cell.textContent = "No extensions match these filters.";
+          row.appendChild(cell);
+          elements.body.appendChild(row);
           return;
         }
-
-        body.innerHTML = filtered
-          .map((e) => {
-            const short = (e.name || "").replace(/^Aniyomi:\s*/i, "");
-            const nsfwBadge = e.nsfw
-              ? '<span class="badge badge-nsfw">NSFW</span>'
-              : "";
-            const href = apkHref(e.apk);
-            const icon = iconHref(e.pkg);
-            const img = icon
-              ? '<img class="ext-icon" src="' +
-                escapeAttr(icon) +
-                '" alt="" width="28" height="28" loading="lazy" onerror="this.style.visibility=\'hidden\'" />'
-              : "";
-            return (
-              "<tr>" +
-              '<td class="name-cell">' +
-              img +
-              '<span class="name-text">' +
-              escapeHtml(short) +
-              nsfwBadge +
-              "</span></td>" +
-              '<td><span class="badge badge-lang">' +
-              escapeHtml(e.lang || "?") +
-              "</span></td>" +
-              "<td>" +
-              escapeHtml(e.version || String(e.code || "")) +
-              "</td>" +
-              '<td><a class="dl" href="' +
-              escapeAttr(href) +
-              '" download>' +
-              "↓ APK" +
-              "</a></td>" +
-              "</tr>"
-            );
-          })
-          .join("");
+        const fragment = document.createDocumentFragment();
+        visible.forEach((extension) => fragment.appendChild(extensionRow(extension)));
+        elements.body.appendChild(fragment);
       }
 
-      function escapeHtml(s) {
-        return String(s)
-          .replace(/&/g, "&amp;")
-          .replace(/</g, "&lt;")
-          .replace(/>/g, "&gt;")
-          .replace(/"/g, "&quot;");
-      }
-      function escapeAttr(s) {
-        return escapeHtml(s).replace(/'/g, "&#39;");
-      }
-
-      ["filter-q", "filter-lang", "filter-nsfw"].forEach((id) => {
-        document.getElementById(id).addEventListener("input", render);
-        document.getElementById(id).addEventListener("change", render);
+      document.getElementById("copy-primary").addEventListener("click", copyRepositoryUrl);
+      document.getElementById("copy-url").addEventListener("click", copyRepositoryUrl);
+      elements.openApp.addEventListener("click", () => {
+        showToast("Opening the app confirmation screen…");
+      });
+      [elements.query, elements.language, elements.rating].forEach((control) => {
+        control.addEventListener("input", render);
+        control.addEventListener("change", render);
       });
 
-      fetch("index.min.json", { cache: "no-store" })
-        .then((r) => {
-          if (!r.ok) throw new Error("HTTP " + r.status);
-          return r.json();
+      fetch(indexUrl, { cache: "no-store" })
+        .then((response) => {
+          if (!response.ok) throw new Error(`HTTP ${response.status}`);
+          return response.json();
         })
         .then((data) => {
-          allExt = Array.isArray(data) ? data : [];
-          allExt.sort((a, b) =>
-            String(a.name || "").localeCompare(String(b.name || ""))
+          if (!Array.isArray(data)) throw new Error("Unexpected index format");
+          catalog = data.sort((a, b) =>
+            String(a.name || "").localeCompare(String(b.name || ""), undefined, { sensitivity: "base" })
           );
-          document.getElementById("ext-count").textContent = String(allExt.length);
+          elements.count.textContent = String(catalog.length);
+          elements.status.textContent = "Catalog online";
+          document.querySelector(".repo-summary").classList.add("is-online");
           render();
         })
-        .catch((err) => {
-          document.getElementById("dl-body").innerHTML =
-            '<tr><td colspan="4">Failed to load index.min.json (' +
-            escapeHtml(err.message) +
-            "). Serve this folder over HTTP if opening as file://.</td></tr>";
-          document.getElementById("dl-stats").textContent = "Index load failed";
+        .catch((error) => {
+          elements.status.textContent = "Catalog unavailable";
+          elements.resultCount.textContent = "Could not load index";
+          const row = document.createElement("tr");
+          const cell = document.createElement("td");
+          cell.colSpan = 4;
+          cell.className = "empty-state";
+          cell.textContent =
+            `The catalog could not be loaded (${String(error.message)}). Use the repository URL above or try again.`;
+          row.appendChild(cell);
+          elements.body.replaceChildren(row);
         });
     })();
   </script>

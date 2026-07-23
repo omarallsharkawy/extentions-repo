@@ -1,6 +1,5 @@
 import json
 import re
-import shutil
 import subprocess
 from pathlib import Path
 from zipfile import ZipFile
@@ -8,42 +7,7 @@ from zipfile import ZipFile
 AAPT = Path(r"C:\Users\Administrator\AppData\Local\Android\Sdk\build-tools\37.0.0\aapt.exe")
 ROOT = Path(__file__).resolve().parent
 APK_DIR = ROOT / "apk"
-APK_APK_DIR = APK_DIR / "apk"
 ICON_DIR = ROOT / "icon"
-
-
-def sync_apks_triple_path(root: Path):
-    apk_dir = root / "apk"
-    apk_apk_dir = apk_dir / "apk"
-    apk_dir.mkdir(exist_ok=True)
-    apk_apk_dir.mkdir(exist_ok=True)
-
-    pkgs = {}
-    for apk in apk_dir.glob("*.apk"):
-        m = re.match(r"^(.*?)-v(\d+)\.apk$", apk.name)
-        if m:
-            pkg_base = m.group(1)
-            ver_code = int(m.group(2))
-            if pkg_base not in pkgs or ver_code > pkgs[pkg_base][0]:
-                pkgs[pkg_base] = (ver_code, apk)
-        else:
-            pkg_base = apk.stem
-            if pkg_base not in pkgs:
-                pkgs[pkg_base] = (0, apk)
-
-    valid_apk_names = {apk.name for _, apk in pkgs.values()}
-
-    for p in [root, apk_dir, apk_apk_dir]:
-        for apk in p.glob("*.apk"):
-            if apk.name not in valid_apk_names:
-                print(f"Removing orphaned/old APK: {apk}")
-                apk.unlink()
-
-    for _, apk in pkgs.values():
-        for dest in [root / apk.name, apk_apk_dir / apk.name]:
-            if not dest.exists() or dest.stat().st_size != apk.stat().st_size:
-                shutil.copy2(apk, dest)
-                print(f"Synced {apk.name} -> {dest}")
 
 
 def badging(apk: Path):
@@ -65,10 +29,7 @@ def badging(apk: Path):
 
 def main():
     APK_DIR.mkdir(exist_ok=True)
-    APK_APK_DIR.mkdir(exist_ok=True)
     ICON_DIR.mkdir(exist_ok=True)
-
-    sync_apks_triple_path(ROOT)
 
     prev_data = []
     index_min_file = ROOT / "index.min.json"
@@ -149,7 +110,13 @@ def main():
             }
         )
 
-    assert all("/" not in e["apk"] for e in entries), "apk fields must be basenames"
+    assert entries, "No APKs found in /apk"
+    assert all("/" not in e["apk"] and "\\" not in e["apk"] for e in entries), (
+        "apk fields must be basenames"
+    )
+    assert len({e["pkg"] for e in entries}) == len(entries), "Duplicate package names in index"
+    assert len({e["apk"] for e in entries}) == len(entries), "Duplicate APK names in index"
+    assert all((APK_DIR / e["apk"]).is_file() for e in entries), "Index references a missing APK"
 
     min_json_bytes = json.dumps(entries, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
     full_json_bytes = (json.dumps(entries, indent=2, ensure_ascii=False) + "\n").encode("utf-8")
@@ -167,12 +134,17 @@ def main():
         + "\n"
     )
 
-    for p in [ROOT, APK_DIR, APK_APK_DIR]:
-        (p / "index.min.json").write_bytes(min_json_bytes)
-        (p / "index.json").write_bytes(full_json_bytes)
-        (p / "repo.json").write_text(repo_json_str, encoding="utf-8")
+    (ROOT / "index.min.json").write_bytes(min_json_bytes)
+    (ROOT / "index.json").write_bytes(full_json_bytes)
+    (ROOT / "repo.json").write_text(repo_json_str, encoding="utf-8")
 
-    print("entries", len(entries), "icons", len(list(ICON_DIR.glob("*.png"))))
+    print(
+        "verified canonical layout:",
+        len(entries),
+        "extensions in /apk and",
+        len(list(ICON_DIR.glob("*.png"))),
+        "icons",
+    )
     for e in entries:
         if "pornhub" in e["pkg"] or "streaming" in e["pkg"]:
             print(e["version"], e["apk"], [s["name"] for s in e["sources"][:4]])

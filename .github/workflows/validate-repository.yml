@@ -1,0 +1,49 @@
+name: Validate repository
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+
+      - name: Validate indexes and canonical asset layout
+        shell: python
+        run: |
+          import json
+          from pathlib import Path
+
+          root = Path(".")
+          entries = json.loads((root / "index.json").read_text(encoding="utf-8"))
+          min_entries = json.loads((root / "index.min.json").read_text(encoding="utf-8"))
+
+          assert entries == min_entries, "index.json and index.min.json differ"
+          assert entries, "extension index is empty"
+          assert not list(root.glob("*.apk")), "root-level APK duplicates are not allowed"
+          assert not (root / "apk" / "apk").exists(), "nested apk/apk mirror is not allowed"
+
+          packages = [entry["pkg"] for entry in entries]
+          apks = [entry["apk"] for entry in entries]
+          assert len(packages) == len(set(packages)), "duplicate package in index"
+          assert len(apks) == len(set(apks)), "duplicate APK in index"
+
+          for entry in entries:
+              required = {"name", "pkg", "apk", "lang", "code", "version", "nsfw", "sources"}
+              assert required <= entry.keys(), f"missing fields for {entry.get('pkg')}"
+              assert "/" not in entry["apk"] and "\\" not in entry["apk"], "APK must be a basename"
+              assert (root / "apk" / entry["apk"]).is_file(), f"missing APK: {entry['apk']}"
+              assert (root / "icon" / f"{entry['pkg']}.png").is_file(), f"missing icon: {entry['pkg']}"
+              assert isinstance(entry["code"], int) and entry["code"] > 0, "invalid version code"
+              assert entry["nsfw"] in (0, 1), "invalid NSFW flag"
+
+          published = list((root / "apk").glob("*.apk"))
+          assert len(published) == len(entries), "unindexed or missing APK in /apk"
+          print(f"Validated {len(entries)} extensions.")

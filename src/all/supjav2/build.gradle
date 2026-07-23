@@ -1,7 +1,7 @@
 ext {
     extName = 'SupJav 2'
     extClass = '.SupJav2Factory'
-    extVersionCode = 21
+    extVersionCode = 25
     isNsfw = true
 }
 apply plugin: "kei.plugins.extension.legacy"
@@ -11,6 +11,7 @@ dependencies {
     implementation(project(":lib:streamtapeextractor"))
     implementation(project(":lib:streamwishextractor"))
     implementation(project(":lib:uqloadextractor"))
+    implementation(project(":lib:unpacker"))
     implementation(project(":lib:vidhideextractor"))
     implementation(project(":lib:voeextractor"))
     implementation(project(":lib:playlistutils"))

@@ -1,25 +1,43 @@
 package eu.kanade.tachiyomi.animeextension.all.sextb
 
+import android.util.Base64
 import aniyomi.lib.doodextractor.DoodExtractor
+import aniyomi.lib.mixdropextractor.MixDropExtractor
 import aniyomi.lib.playlistutils.PlaylistUtils
+import aniyomi.lib.streamtapeextractor.StreamTapeExtractor
 import aniyomi.lib.streamwishextractor.StreamWishExtractor
 import aniyomi.lib.uqloadextractor.UqloadExtractor
 import aniyomi.lib.vidhideextractor.VidHideExtractor
+import aniyomi.lib.voeextractor.VoeExtractor
 import eu.kanade.tachiyomi.animesource.model.AnimeFilter
 import eu.kanade.tachiyomi.animesource.model.AnimeFilterList
+import eu.kanade.tachiyomi.animesource.model.AnimesPage
 import eu.kanade.tachiyomi.animesource.model.SAnime
 import eu.kanade.tachiyomi.animesource.model.SEpisode
 import eu.kanade.tachiyomi.animesource.model.Video
 import eu.kanade.tachiyomi.animesource.online.ParsedAnimeHttpSource
 import eu.kanade.tachiyomi.network.GET
+import eu.kanade.tachiyomi.network.POST
+import eu.kanade.tachiyomi.network.await
 import eu.kanade.tachiyomi.util.asJsoup
+import keiyoushi.utils.bodyString
 import keiyoushi.utils.parallelCatchingFlatMapBlocking
+import okhttp3.FormBody
 import okhttp3.Headers
+import okhttp3.HttpUrl.Companion.toHttpUrl
+import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import okhttp3.Request
 import okhttp3.Response
+import org.json.JSONObject
+import org.jsoup.Jsoup
 import org.jsoup.nodes.Document
 import org.jsoup.nodes.Element
-import org.jsoup.select.Elements
+import java.io.IOException
+import java.util.Calendar
+import java.util.concurrent.ConcurrentHashMap
+import javax.crypto.Cipher
+import javax.crypto.spec.IvParameterSpec
+import javax.crypto.spec.SecretKeySpec
 
 class SexTB : ParsedAnimeHttpSource() {
 
@@ -31,50 +49,49 @@ class SexTB : ParsedAnimeHttpSource() {
 
     override val supportsLatest = true
 
+    /*
+     * Keep the app-provided Android User-Agent and cookie jar. Forcing a
+     * desktop UA here makes Cloudflare clearance cookies incompatible with
+     * the WebView session used by Aniyomi's NetworkHelper.
+     */
     override fun headersBuilder(): Headers.Builder = super.headersBuilder()
         .set("Referer", "$baseUrl/")
-        .set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36")
-        .set("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8")
+        .set("Origin", baseUrl)
+        .set("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8")
         .set("Accept-Language", "en-US,en;q=0.9")
-        .set("Sec-Fetch-Dest", "document")
-        .set("Sec-Fetch-Mode", "navigate")
-        .set("Sec-Fetch-Site", "same-origin")
-        .set("Sec-Fetch-User", "?1")
-        .set("Upgrade-Insecure-Requests", "1")
 
-    // Extractors
-    private val streamwishExtractor by lazy { StreamWishExtractor(client, headers) }
     private val doodExtractor by lazy { DoodExtractor(client) }
+    private val mixDropExtractor by lazy { MixDropExtractor(client) }
+    private val streamTapeExtractor by lazy { StreamTapeExtractor(client) }
     private val uqloadExtractor by lazy { UqloadExtractor(client) }
-    private val vidhideExtractor by lazy { VidHideExtractor(client, headers) }
     private val playlistUtils by lazy { PlaylistUtils(client, headers) }
+    private val resolvedCatalogPaths = ConcurrentHashMap(CURRENT_CATALOG_PATHS)
 
-    // Popular Anime
-    override fun popularAnimeRequest(page: Int): Request = GET("$baseUrl/genre/censored?genre=all&studio=all&quality=all&year=all&sort=viewed&page=$page", headers)
+    // ============================== Popular ===============================
+    override fun popularAnimeRequest(page: Int): Request = catalogRequest(
+        page = page,
+        categoryPath = DEFAULT_CATEGORY,
+        sort = "viewed",
+    )
 
-    override fun popularAnimeSelector(): String = "div.tray-item"
+    override fun popularAnimeSelector(): String = "div.tray-content > div.tray-item, div.tray-item"
 
     override fun popularAnimeFromElement(element: Element): SAnime = SAnime.create().apply {
-        val link = element.selectFirst("a") ?: element
+        val link = element.selectFirst("a[href]") ?: element
         setUrlWithoutDomain(link.attr("href"))
 
-        val img = element.selectFirst("img")
-        if (img != null) {
-            val rawTitle = element.selectFirst("div.tray-item-title")?.text()
-                ?.ifBlank { img.attr("alt") }
-                ?: img.attr("alt")
-            title = rawTitle.trim()
+        val image: Element? = element.selectFirst("img")
+        title = element.selectFirst("div.tray-item-title")?.text()
+            ?.ifBlank { image?.attr("alt") }
+            ?: image?.attr("alt").orEmpty()
 
-            val rawThumb = img.attr("data-src")
-                .ifBlank { img.attr("src") }
-                .ifBlank { img.absUrl("data-src") }
-                .ifBlank { img.absUrl("src") }
-
-            thumbnail_url = when {
-                rawThumb.startsWith("//") -> "https:$rawThumb"
-                rawThumb.startsWith("/") -> "$baseUrl$rawThumb"
-                else -> rawThumb
-            }
+        if (image != null) {
+            thumbnail_url = normalizeUrl(
+                image.attr("data-src")
+                    .ifBlank { image.attr("src") }
+                    .ifBlank { image.absUrl("data-src") }
+                    .ifBlank { image.absUrl("src") },
+            )
         }
 
         if (title.isBlank()) {
@@ -83,539 +100,687 @@ class SexTB : ParsedAnimeHttpSource() {
 
         val code = element.selectFirst("div.tray-item-code")?.text()?.trim()
         val duration = element.selectFirst("div.tray-item-runtime")?.text()?.trim()
-
         if (!code.isNullOrBlank() && !title.contains(code, ignoreCase = true)) {
             title = "[$code] $title"
         }
-
         if (!duration.isNullOrBlank()) {
             title = "$title [$duration]"
         }
     }
 
-    override fun popularAnimeNextPageSelector(): String? = "ul.pagination li.active + li a, ul.pagination li:has(a.current) + li a, div.pagination li.active + li a, div.pagination a.next, a[rel=next]"
+    override fun popularAnimeNextPageSelector(): String = "ul.pagination li:has(a.current) + li a, ul.pagination li.active + li a, ul.pagination a[rel=next], ul.pagination li.next a, a[rel=next]"
 
-    // Latest Updates
-    override fun latestUpdatesRequest(page: Int): Request = GET("$baseUrl/genre/censored?genre=all&studio=all&quality=all&year=all&sort=release&page=$page", headers)
+    override fun popularAnimeParse(response: Response): AnimesPage {
+        response.throwIfCloudflareChallenge()
+        response.rememberCatalogPath()
+        return super.popularAnimeParse(response)
+    }
+
+    // =============================== Latest ===============================
+    override fun latestUpdatesRequest(page: Int): Request = catalogRequest(
+        page = page,
+        categoryPath = DEFAULT_CATEGORY,
+        sort = "desc",
+    )
 
     override fun latestUpdatesSelector(): String = popularAnimeSelector()
 
     override fun latestUpdatesFromElement(element: Element): SAnime = popularAnimeFromElement(element)
 
-    override fun latestUpdatesNextPageSelector(): String? = popularAnimeNextPageSelector()
+    override fun latestUpdatesNextPageSelector(): String = popularAnimeNextPageSelector()
 
-    // Search Anime
+    override fun latestUpdatesParse(response: Response): AnimesPage {
+        response.throwIfCloudflareChallenge()
+        response.rememberCatalogPath()
+        return super.latestUpdatesParse(response)
+    }
+
+    // =============================== Search ===============================
     override fun searchAnimeRequest(page: Int, query: String, filters: AnimeFilterList): Request {
         if (query.isNotBlank()) {
-            val url = if (page > 1) {
-                "$baseUrl/page/$page/?s=$query"
-            } else {
-                "$baseUrl/?s=$query"
-            }
+            val url = baseUrl.toHttpUrl().newBuilder()
+                .addPathSegment("search")
+                .addPathSegment(query.trim())
+                .apply {
+                    if (page > 1) addQueryParameter("page", page.toString())
+                }
+                .build()
             return GET(url, headers)
         }
 
-        var categorySlug = ""
-        var genreSlug = ""
-        var studioSlug = ""
-        var actressSlug = ""
-        var qualitySlug = ""
-        var yearSlug = ""
-        var sortSlug = ""
+        val category = filters.filterIsInstance<CategoryFilter>().firstOrNull()?.selected ?: DEFAULT_CATEGORY
+        val genre = filters.filterIsInstance<GenreFilter>().firstOrNull()?.selected ?: "all"
+        val studio = filters.filterIsInstance<StudioFilter>().firstOrNull()?.selected ?: "all"
+        val quality = filters.filterIsInstance<QualityFilter>().firstOrNull()?.selected ?: "all"
+        val year = filters.filterIsInstance<YearFilter>().firstOrNull()?.selected ?: "all"
+        val sort = filters.filterIsInstance<SortFilter>().firstOrNull()?.selected ?: "desc"
 
-        for (filter in filters) {
-            when (filter) {
-                is CategoryFilter -> categorySlug = filter.selected
-                is GenreFilter -> genreSlug = filter.selected
-                is StudioFilter -> studioSlug = filter.selected
-                is ActressFilter -> actressSlug = filter.selected
-                is QualityFilter -> qualitySlug = filter.selected
-                is YearFilter -> yearSlug = filter.selected
-                is SortFilter -> sortSlug = filter.selected
-                else -> {}
-            }
-        }
+        return catalogRequest(page, category, genre, studio, quality, year, sort)
+    }
 
-        return when {
-            actressSlug.isNotEmpty() -> {
-                val url = if (page > 1) {
-                    "$baseUrl/actress/$actressSlug/page/$page/"
-                } else {
-                    "$baseUrl/actress/$actressSlug/"
-                }
-                GET(url, headers)
+    private fun catalogRequest(
+        page: Int,
+        categoryPath: String,
+        genre: String = "all",
+        studio: String = "all",
+        quality: String = "all",
+        year: String = "all",
+        sort: String,
+    ): Request {
+        val resolvedPath = resolvedCatalogPaths[categoryPath] ?: categoryPath
+        val pagedPath = if (page > 1) "$resolvedPath/pg-${page.coerceAtLeast(1)}" else resolvedPath
+        val url = "$baseUrl$pagedPath".toHttpUrl().newBuilder()
+            .apply {
+                if (genre != "all") addQueryParameter("genre", genre)
+                if (studio != "all") addQueryParameter("studio", studio)
+                if (quality != "all") addQueryParameter("quality", quality)
+                if (year != "all") addQueryParameter("year", year)
+                if (sort != "desc") addQueryParameter("sort", sort)
             }
-
-            studioSlug.isNotEmpty() -> {
-                val url = if (page > 1) {
-                    "$baseUrl/studio/$studioSlug/page/$page/"
-                } else {
-                    "$baseUrl/studio/$studioSlug/"
-                }
-                GET(url, headers)
-            }
-
-            categorySlug.isNotEmpty() -> {
-                val url = if (page > 1) {
-                    "$baseUrl/category/$categorySlug/page/$page/"
-                } else {
-                    "$baseUrl/category/$categorySlug/"
-                }
-                GET(url, headers)
-            }
-
-            genreSlug.isNotEmpty() -> {
-                val url = if (page > 1) {
-                    "$baseUrl/genre/$genreSlug/page/$page/"
-                } else {
-                    "$baseUrl/genre/$genreSlug/"
-                }
-                GET(url, headers)
-            }
-
-            qualitySlug.isNotEmpty() -> {
-                val url = if (page > 1) {
-                    "$baseUrl/quality/$qualitySlug/page/$page/"
-                } else {
-                    "$baseUrl/quality/$qualitySlug/"
-                }
-                GET(url, headers)
-            }
-
-            yearSlug.isNotEmpty() -> {
-                val url = if (page > 1) {
-                    "$baseUrl/year/$yearSlug/page/$page/"
-                } else {
-                    "$baseUrl/year/$yearSlug/"
-                }
-                GET(url, headers)
-            }
-
-            sortSlug == "trending" -> {
-                popularAnimeRequest(page)
-            }
-
-            sortSlug == "most-viewed" -> {
-                val url = if (page > 1) {
-                    "$baseUrl/most-viewed/page/$page/"
-                } else {
-                    "$baseUrl/most-viewed/"
-                }
-                GET(url, headers)
-            }
-
-            else -> {
-                latestUpdatesRequest(page)
-            }
-        }
+            .build()
+        return GET(url, headers)
     }
 
     override fun searchAnimeSelector(): String = popularAnimeSelector()
 
     override fun searchAnimeFromElement(element: Element): SAnime = popularAnimeFromElement(element)
 
-    override fun searchAnimeNextPageSelector(): String? = popularAnimeNextPageSelector()
+    override fun searchAnimeNextPageSelector(): String = popularAnimeNextPageSelector()
 
-    // Filters
+    override fun searchAnimeParse(response: Response): AnimesPage {
+        response.throwIfCloudflareChallenge()
+        response.rememberCatalogPath()
+        return super.searchAnimeParse(response)
+    }
+
+    // =============================== Filters ==============================
     override fun getFilterList(): AnimeFilterList = AnimeFilterList(
         CategoryFilter(),
         GenreFilter(),
         StudioFilter(),
-        ActressFilter(),
         QualityFilter(),
         YearFilter(),
         SortFilter(),
     )
 
-    class CategoryFilter :
-        AnimeFilter.Select<String>(
-            "Category",
-            CATEGORIES.map { it.first }.toTypedArray(),
-        ) {
-        val selected get() = CATEGORIES[state].second
-
-        companion object {
-            val CATEGORIES = listOf(
-                Pair("All", ""),
-                Pair("Uncensored Leak", "uncensored-leak"),
-                Pair("JAV Uncensored", "jav-uncensored"),
-                Pair("JAV Censored", "jav-censored"),
-                Pair("Amateur", "amateur"),
-                Pair("VR", "vr"),
-            )
-        }
+    open class UriPartFilter(
+        displayName: String,
+        private val entries: Array<Pair<String, String>>,
+    ) : AnimeFilter.Select<String>(displayName, entries.map { it.first }.toTypedArray()) {
+        val selected get() = entries[state].second
     }
 
-    class GenreFilter :
-        AnimeFilter.Select<String>(
-            "Genre",
-            GENRES.map { it.first }.toTypedArray(),
-        ) {
-        val selected get() = GENRES[state].second
+    class CategoryFilter : UriPartFilter("Category", CATEGORIES)
+    class GenreFilter : UriPartFilter("Genre", GENRES)
+    class StudioFilter : UriPartFilter("Studio", STUDIOS)
+    class QualityFilter : UriPartFilter("Quality", QUALITIES)
+    class YearFilter : UriPartFilter("Year", YEARS)
+    class SortFilter : UriPartFilter("Sort By", SORTS)
 
-        companion object {
-            val GENRES = listOf(
-                Pair("All", ""),
-                Pair("Anal", "anal"),
-                Pair("Big Tits", "big-tits"),
-                Pair("Blowjob", "blowjob"),
-                Pair("Cosplay", "cosplay"),
-                Pair("Creampie", "creampie"),
-                Pair("Maid", "maid"),
-                Pair("Married Woman", "married-woman"),
-                Pair("Massage", "massage"),
-                Pair("Mature", "mature"),
-                Pair("MILF", "milf"),
-                Pair("Solowork", "solowork"),
-                Pair("Squirting", "squirting"),
-                Pair("Subtitled", "subtitled"),
-                Pair("Teacher", "teacher"),
-                Pair("Uniform", "uniform"),
-            )
-        }
-    }
-
-    class StudioFilter :
-        AnimeFilter.Select<String>(
-            "Studio",
-            STUDIOS.map { it.first }.toTypedArray(),
-        ) {
-        val selected get() = STUDIOS[state].second
-
-        companion object {
-            val STUDIOS = listOf(
-                Pair("All", ""),
-                Pair("S1", "s1-no-1-style-4qcwwbhb"),
-                Pair("Moodyz", "moodyz-hpqrql0f"),
-                Pair("Idea Pocket", "idea-pocket-sip65bhm"),
-                Pair("Soft On Demand", "sod-create-hqtvjs77"),
-                Pair("MUTEKI", "muteki-yej59j2k"),
-                Pair("Premium", "premium-0w0gfxb5"),
-                Pair("IPX", "ipx"),
-                Pair("Attackers", "attackers-3t7al8uh"),
-                Pair("Prestige", "prestige-v6k9075j"),
-                Pair("Oppai", "oppai-fdt1v3fn"),
-                Pair("Kawaii", "kawaii-d073oxh7"),
-                Pair("Fitch", "fitch"),
-                Pair("FALENO", "faleno"),
-            )
-        }
-    }
-
-    class ActressFilter :
-        AnimeFilter.Select<String>(
-            "Actress",
-            ACTRESSES.map { it.first }.toTypedArray(),
-        ) {
-        val selected get() = ACTRESSES[state].second
-
-        companion object {
-            val ACTRESSES = listOf(
-                Pair("All", ""),
-                Pair("Yumi Kazama", "th1bdtq81"),
-                Pair("Yui Hatano", "6273dbs6j"),
-                Pair("Meari Tachibana", "kn257tc95"),
-                Pair("Yu Shinoda", "yu-shinoda"),
-                Pair("Hana Haruna", "if68a06ll"),
-                Pair("Ririko Kinoshita", "1fjvbdte7"),
-                Pair("Mina Kitano", "mina-kitano"),
-                Pair("Ai Sayama", "ai-sayama"),
-                Pair("Eimi Fukada", "eimi-fukada"),
-                Pair("Maki Hojo", "maki-hojo"),
-                Pair("Chitose Saegusa", "chitose-saegusa"),
-                Pair("Nao Jinguuji", "nao-jinguuji"),
-                Pair("Asahi Mizuno", "asahi-mizuno"),
-                Pair("Reiko Kobayakawa", "reiko-kobayakawa"),
-                Pair("Mako Oda", "mako-oda"),
-                Pair("Momoko Isshiki", "momoko-isshiki"),
-                Pair("Aka Asuka", "qhcvgnp21"),
-            )
-        }
-    }
-
-    class QualityFilter :
-        AnimeFilter.Select<String>(
-            "Quality",
-            QUALITIES.map { it.first }.toTypedArray(),
-        ) {
-        val selected get() = QUALITIES[state].second
-
-        companion object {
-            val QUALITIES = listOf(
-                Pair("All", ""),
-                Pair("1080p", "1080p"),
-                Pair("720p", "720p"),
-                Pair("4K", "4k"),
-                Pair("HD", "hd"),
-            )
-        }
-    }
-
-    class YearFilter :
-        AnimeFilter.Select<String>(
-            "Year",
-            YEARS.map { it.first }.toTypedArray(),
-        ) {
-        val selected get() = YEARS[state].second
-
-        companion object {
-            val YEARS = listOf(
-                Pair("All", ""),
-                Pair("2026", "2026"),
-                Pair("2025", "2025"),
-                Pair("2024", "2024"),
-                Pair("2023", "2023"),
-                Pair("2022", "2022"),
-                Pair("2021", "2021"),
-                Pair("2020", "2020"),
-            )
-        }
-    }
-
-    class SortFilter :
-        AnimeFilter.Select<String>(
-            "Sort By",
-            SORTS.map { it.first }.toTypedArray(),
-        ) {
-        val selected get() = SORTS[state].second
-
-        companion object {
-            val SORTS = listOf(
-                Pair("Latest", "latest"),
-                Pair("Trending", "trending"),
-                Pair("Most Viewed", "most-viewed"),
-            )
-        }
-    }
-
-    // Anime Details
+    // =========================== Anime Details ============================
     override fun animeDetailsParse(document: Document): SAnime = SAnime.create().apply {
-        title = document.selectFirst("h1.entry-title, h1.title, h1")?.text().orEmpty()
-        genre = document.select("a[rel=tag], .genres a, .tags a").joinToString { it.text() }
-        description = document.selectFirst(".entry-content p, .description p")?.text()
-        thumbnail_url = document.selectFirst(".poster img, .entry-content img")?.let { img ->
-            img.attr("data-src").ifEmpty { img.attr("src") }
+        document.throwIfCloudflareChallenge()
+
+        title = document.selectFirst("h1.film-info-title, h1")?.text().orEmpty()
+        val thumbnailElement: Element? = document.selectFirst("#poster img, div.col-5 img, img[itemprop=image]")
+        if (thumbnailElement != null) {
+            thumbnail_url = normalizeUrl(
+                thumbnailElement.attr("data-src").ifBlank { thumbnailElement.attr("src") },
+            )
         }
+        author = document.metadataLinks("Director:")
+        artist = document.metadataLinks("Cast(s):", "Cast:")
+        genre = document.metadataLinks("Genre(s):", "Genre:")
+        val descriptionElement: Element? =
+            document.selectFirst(".text-desc-container, .full-text-desc, meta[name=description]")
+        val synopsis = if (descriptionElement?.tagName() == "meta") {
+            descriptionElement.attr("content")
+        } else {
+            descriptionElement?.text()
+        }?.takeIf(String::isNotBlank)
+        description = buildList {
+            synopsis?.let(::add)
+            document.metadataText("Label:")?.let { add("Label: $it") }
+            document.metadataText("Studio:")?.let { add("Studio: $it") }
+            document.metadataText("Quality:")?.let { add("Quality: $it") }
+            document.metadataText("Release Date:")?.let { add("Release Date: $it") }
+            document.metadataText("Runtimes:", "Runtime:")?.let { add("Runtime: $it") }
+        }.joinToString("\n").takeIf(String::isNotBlank)
+        status = SAnime.COMPLETED
     }
 
-    // Episodes
-    override suspend fun getEpisodeList(anime: SAnime): List<SEpisode> {
-        val episode = SEpisode.create().apply {
-            name = "Episode"
+    private fun Document.metadataLinks(vararg labels: String): String? = select("div.description")
+        .firstOrNull { element -> labels.any { label -> element.text().contains(label, ignoreCase = true) } }
+        ?.select("a")
+        ?.joinToString { it.text() }
+        ?.takeIf(String::isNotBlank)
+
+    private fun Document.metadataText(vararg labels: String): String? = select("div.description")
+        .firstOrNull { element -> labels.any { label -> element.text().startsWith(label, ignoreCase = true) } }
+        ?.text()
+        ?.let { text ->
+            labels.firstNotNullOfOrNull { label ->
+                text.takeIf { it.startsWith(label, ignoreCase = true) }?.substring(label.length)?.trim()
+            }
+        }
+        ?.takeIf(String::isNotBlank)
+
+    // ============================== Episodes ==============================
+    override suspend fun getEpisodeList(anime: SAnime): List<SEpisode> = listOf(
+        SEpisode.create().apply {
+            name = "Video"
             episode_number = 1F
             url = anime.url
-        }
-        return listOf(episode)
-    }
+        },
+    )
 
-    override fun episodeListSelector(): String = "div.tray-item-description"
+    override fun episodeListSelector(): String = "div.film-info"
 
-    override fun episodeFromElement(element: Element): SEpisode = SEpisode.create().apply {
-        name = "Episode"
-        setUrlWithoutDomain(element.selectFirst("a")?.attr("href") ?: "")
-    }
+    override fun episodeFromElement(element: Element): SEpisode = throw UnsupportedOperationException()
 
     override fun episodeListParse(response: Response): List<SEpisode> {
-        val episode = SEpisode.create().apply {
-            name = "Episode"
-            episode_number = 1F
-            url = response.request.url.encodedPath
-        }
-        return listOf(episode)
-    }
-
-    // Video URLs / Player Server Extraction
-    override fun videoListSelector(): String = "button.btn-player.episode, button.btn-download-free, a.btn-player, a[data-url]"
-
-    override fun videoFromElement(element: Element): Video = throw UnsupportedOperationException("Using videoListParse directly")
-
-    override fun videoUrlParse(document: Document): String = throw UnsupportedOperationException()
-
-    override fun videoListParse(response: Response): List<Video> {
-        val document = response.asJsoup()
-        var elements = document.select(videoListSelector())
-
-        if (elements.isEmpty()) {
-            // Secondary selector fallback
-            elements = document.select("iframe[src], a[href*=embed], a[data-src], a[data-embed]")
-        }
-
-        if (elements.isEmpty()) {
-            return emptyList()
-        }
-
-        return extractVideosFromElements(elements)
-    }
-
-    private fun extractVideosFromElements(elements: Elements): List<Video> {
-        val extractedData = elements.mapNotNull { element ->
-            val rawUrl = element.attr("data-url").ifEmpty {
-                element.attr("data-embed").ifEmpty {
-                    element.attr("data-src").ifEmpty {
-                        element.attr("href").ifEmpty {
-                            element.attr("src").ifEmpty {
-                                element.attr("value")
-                            }
-                        }
-                    }
-                }
-            }.trim()
-
-            if (rawUrl.isEmpty() || rawUrl == "#" || rawUrl.startsWith("javascript:")) {
-                return@mapNotNull null
-            }
-
-            val url = when {
-                rawUrl.startsWith("//") -> "https:$rawUrl"
-
-                rawUrl.startsWith("/") -> "$baseUrl$rawUrl"
-
-                !rawUrl.startsWith("http://") && !rawUrl.startsWith("https://") -> {
-                    element.attr("abs:data-url").ifEmpty {
-                        element.attr("abs:href").ifEmpty {
-                            element.attr("abs:src").ifEmpty {
-                                "$baseUrl/$rawUrl"
-                            }
-                        }
-                    }
-                }
-
-                else -> rawUrl
-            }
-
-            val elementText = element.text().trim()
-            val dataServer = element.attr("data-server").ifEmpty {
-                element.attr("data-name").ifEmpty {
-                    element.attr("title")
-                }
-            }.trim()
-
-            val label = determineServerLabel(url, elementText, dataServer)
-            Triple(label, url, elementText)
-        }.distinctBy { it.second }
-
-        val videos = extractedData.parallelCatchingFlatMapBlocking { (label, url, _) ->
-            extractVideosForServer(label, url)
-        }
-
-        // CRITICAL REQUIREMENT: Prioritize SW over TB (and order servers according to priority score)
-        return videos.sortedWith(
-            compareBy { video ->
-                getServerPriorityFromQuality(video.quality)
+        response.throwIfCloudflareChallenge()
+        return listOf(
+            SEpisode.create().apply {
+                name = "Video"
+                episode_number = 1F
+                url = response.request.url.encodedPath
             },
         )
     }
 
-    private fun determineServerLabel(url: String, text: String, dataServer: String): String {
-        val lowerUrl = url.lowercase()
-        val combinedText = "$text $dataServer".uppercase()
+    // ============================ Video Links =============================
+    override fun videoListParse(response: Response): List<Video> {
+        response.throwIfCloudflareChallenge()
+        val document = response.asJsoup()
+        document.throwIfCloudflareChallenge()
 
-        return when {
-            // SW: StreamWish / FastStream
-            lowerUrl.contains("streamwish") || lowerUrl.contains("strwish") ||
-                lowerUrl.contains("embedwish") || lowerUrl.contains("faststream") ||
-                lowerUrl.contains("swish") || lowerUrl.contains("niramirus") ||
-                lowerUrl.contains("medixiru") || combinedText.contains("STREAMWISH") ||
-                combinedText.contains("FASTSTREAM") || combinedText.contains("SW") -> "SW"
+        val playerButtons = document.select("button.btn-player.episode[data-id], button.btn-player[data-id]:not(.vip)")
+            .distinctBy { it.attr("data-id") }
+        if (playerButtons.isEmpty()) return emptyList()
 
-            // FL: FileLions
-            lowerUrl.contains("filelions") || lowerUrl.contains("lion") ||
-                combinedText.contains("FILELIONS") || combinedText.contains("FL") -> "FL"
+        val pageHtml = document.html()
+        val initialToken = PT_REGEX.find(pageHtml)?.groupValues?.get(1).orEmpty()
+        val initialKey = PK_REGEX.find(pageHtml)?.groupValues?.get(1).orEmpty()
+        val fallbackFilmId = FILM_ID_REGEX.find(pageHtml)?.groupValues?.get(1).orEmpty()
+        if (initialToken.isBlank() || initialKey.isBlank()) return emptyList()
 
-            // DD: DoodStream
-            lowerUrl.contains("dood") || lowerUrl.contains("ds2play") ||
-                lowerUrl.contains("dooood") || lowerUrl.contains("d0000d") ||
-                combinedText.contains("DOOD") || combinedText.contains("DD") -> "DD"
+        var token = initialToken
+        var key = initialKey
+        val referer = response.request.url.toString()
+        val resolvedPlayers = mutableListOf<PlayerTarget>()
 
-            // US: Uqload
-            lowerUrl.contains("uqload") || combinedText.contains("UQLOAD") ||
-                combinedText.contains("US") -> "US"
+        for (button in playerButtons) {
+            val episodeId = button.attr("data-id").trim()
+            val filmId = button.attr("data-source").ifBlank { fallbackFilmId }.trim()
+            if (episodeId.isBlank() || filmId.isBlank()) continue
 
-            // PP: StreamP2P / VidHide
-            lowerUrl.contains("streamp2p") || lowerUrl.contains("vidhide") ||
-                lowerUrl.contains("streamhide") || lowerUrl.contains("p2p") ||
-                lowerUrl.contains("guccihide") || combinedText.contains("STREAMP2P") ||
-                combinedText.contains("VIDHIDE") || combinedText.contains("PP") -> "PP"
+            val payload = fetchPlayerPayload(episodeId, filmId, token, referer) ?: continue
+            val decrypted = xorDecrypt(payload.encryptedPlayer, key)
+            if (decrypted.isBlank()) continue
 
-            // TB: SexTB Default
-            lowerUrl.contains("sextb") || combinedText.contains("SEXTB") ||
-                combinedText.contains("TB") -> "TB"
+            token = payload.nextToken.ifBlank { token }
+            key = payload.nextKey.ifBlank { key }
 
-            else -> if (text.isNotBlank()) text else "TB"
+            val label = normalizeServerLabel(button.text())
+            extractPlayerUrls(decrypted, referer).forEach { url ->
+                resolvedPlayers += PlayerTarget(label, url, referer)
+            }
+        }
+
+        return resolvedPlayers
+            .distinctBy { it.url }
+            .parallelCatchingFlatMapBlocking { extractVideos(it, mutableSetOf(), 0) }
+            .distinctBy { it.videoUrl }
+            .sortedBy { serverPriority(it.quality) }
+    }
+
+    private fun fetchPlayerPayload(
+        episodeId: String,
+        filmId: String,
+        token: String,
+        referer: String,
+    ): PlayerPayload? {
+        val form = FormBody.Builder()
+            .add("episode", episodeId)
+            .add("filmId", filmId)
+            .add("pt", token)
+            .build()
+        val ajaxHeaders = headers.newBuilder()
+            .set("Referer", referer)
+            .set("Origin", baseUrl)
+            .set("X-Requested-With", "XMLHttpRequest")
+            .set("Accept", "application/json, text/javascript, */*; q=0.01")
+            .build()
+
+        return try {
+            client.newCall(POST("$baseUrl/ajax/player", ajaxHeaders, form)).execute().use { ajaxResponse ->
+                ajaxResponse.throwIfCloudflareChallenge()
+                val json = JSONObject(ajaxResponse.body.string())
+                if (json.optBoolean("error", false)) return null
+                PlayerPayload(
+                    encryptedPlayer = json.optString("player_enc"),
+                    nextToken = json.optString("next_pt"),
+                    nextKey = json.optString("next_pk"),
+                ).takeIf { it.encryptedPlayer.isNotBlank() }
+            }
+        } catch (e: CloudflareBlockedException) {
+            throw e
+        } catch (_: Exception) {
+            null
         }
     }
 
-    private suspend fun extractVideosForServer(label: String, url: String): List<Video> = runCatching {
-        when (label) {
-            "SW" -> streamwishExtractor.videosFromUrl(url, videoNameGen = { "StreamWish - $it" })
-
-            "FL" -> streamwishExtractor.videosFromUrl(url, videoNameGen = { "FileLions - $it" })
-
-            "DD" -> doodExtractor.videosFromUrl(url, quality = "DoodStream")
-
-            "US" -> uqloadExtractor.videosFromUrl(url, prefix = "Uqload")
-
-            "PP" -> vidhideExtractor.videosFromUrl(url, videoNameGen = { "VidHide - $it" })
-
-            "TB" -> extractSexTBVideo(url)
-
-            else -> {
-                when {
-                    url.contains("streamwish") || url.contains("strwish") || url.contains("embedwish") || url.contains("faststream") ->
-                        streamwishExtractor.videosFromUrl(url, videoNameGen = { "StreamWish - $it" })
-
-                    url.contains("filelions") || url.contains("lion") ->
-                        streamwishExtractor.videosFromUrl(url, videoNameGen = { "FileLions - $it" })
-
-                    url.contains("dood") || url.contains("ds2play") || url.contains("dooood") ->
-                        doodExtractor.videosFromUrl(url, quality = "DoodStream")
-
-                    url.contains("uqload") ->
-                        uqloadExtractor.videosFromUrl(url, prefix = "Uqload")
-
-                    url.contains("vidhide") || url.contains("streamhide") || url.contains("streamp2p") || url.contains("p2p") ->
-                        vidhideExtractor.videosFromUrl(url, videoNameGen = { "VidHide - $it" })
-
-                    else -> extractSexTBVideo(url)
-                }
+    private fun xorDecrypt(encoded: String, key: String): String {
+        if (encoded.isBlank() || key.isBlank()) return ""
+        return runCatching {
+            val encrypted = Base64.decode(encoded, Base64.DEFAULT)
+            val keyBytes = key.toByteArray(Charsets.UTF_8)
+            val decrypted = ByteArray(encrypted.size) { index ->
+                (encrypted[index].toInt() xor keyBytes[index % keyBytes.size].toInt()).toByte()
             }
-        }
-    }.getOrElse { emptyList() }
+            decrypted.toString(Charsets.UTF_8)
+        }.getOrDefault("")
+    }
 
-    private fun extractSexTBVideo(url: String): List<Video> {
-        if (url.contains(".m3u8")) {
-            return playlistUtils.extractFromHls(url, videoNameGen = { "SexTB - $it" })
-        }
+    private fun extractPlayerUrls(html: String, referer: String): List<String> {
+        val normalizedHtml = html.replace("\\/", "/").replace("\\u0026", "&")
+        val document = Jsoup.parse(normalizedHtml, referer)
+        val elementUrls = document.select("iframe[src], source[src], video[src], a[href]")
+            .mapNotNull { element ->
+                val attribute = if (element.hasAttr("src")) "src" else "href"
+                normalizeUrl(element.absUrl(attribute).ifBlank { element.attr(attribute) })
+                    ?.takeUnless { it.startsWith("javascript:", ignoreCase = true) || it == "#" }
+            }
+        val scriptUrls = PLAYER_URL_REGEX.findAll(normalizedHtml)
+            .map { normalizeUrl(it.value) }
+            .filterNotNull()
+            .toList()
+
+        return (elementUrls + scriptUrls).distinct()
+    }
+
+    private suspend fun extractVideos(
+        target: PlayerTarget,
+        visited: MutableSet<String>,
+        depth: Int,
+    ): List<Video> {
+        if (depth > MAX_PLAYER_DEPTH || !visited.add(target.url)) return emptyList()
+
+        val url = target.url
+        val lowerUrl = url.lowercase()
+        val label = normalizeServerLabel(target.label, lowerUrl)
+        val videoHeaders = headersFor(target.referer)
 
         return runCatching {
-            val response = client.newCall(GET(url, headers)).execute()
-            val doc = response.asJsoup()
+            when {
+                ".m3u8" in lowerUrl -> playlistUtils.extractFromHls(
+                    playlistUrl = url,
+                    referer = target.referer,
+                    masterHeaders = videoHeaders,
+                    videoHeaders = videoHeaders,
+                    videoNameGen = { "$label - $it" },
+                )
 
-            val scriptData = doc.select("script").map { it.data() }.firstOrNull { it.contains("m3u8") }
-            val m3u8Url = scriptData?.let {
-                Regex("""https?://[^\s"'<>]+\.m3u8[^\s"'<>]*""").find(it)?.value
-            } ?: doc.selectFirst("source[src*=m3u8], video source[src]")?.attr("src")
+                lowerUrl.substringBefore('?').endsWith(".mp4") ->
+                    listOf(Video(url, "$label - MP4", url, headers = videoHeaders))
 
-            if (!m3u8Url.isNullOrEmpty()) {
-                playlistUtils.extractFromHls(m3u8Url, videoNameGen = { "SexTB - $it" })
-            } else {
-                val mp4Url = doc.selectFirst("source[src*=mp4], video source[src*=mp4]")?.attr("src")
-                if (!mp4Url.isNullOrEmpty()) {
-                    listOf(Video(mp4Url, "SexTB - Default", mp4Url, headers = headers))
-                } else {
-                    emptyList()
-                }
+                label == "SW" || label == "FL" ->
+                    StreamWishExtractor(client, videoHeaders)
+                        .videosFromUrl(url, videoNameGen = { "$label - $it" })
+
+                label == "DD" -> doodExtractor.videosFromUrl(url, quality = "DD")
+
+                label == "ST" -> streamTapeExtractor.videosFromUrl(url)
+
+                label == "UPN" -> extractUpnVideos(target)
+
+                label == "US" || label == "UQLOAD" ->
+                    uqloadExtractor.videosFromUrl(url, prefix = "US")
+
+                label == "MD" -> mixDropExtractor.videosFromUrl(url)
+
+                label == "PP" -> VidHideExtractor(client, videoHeaders)
+                    .videosFromUrl(url, videoNameGen = { "PP - $it" })
+
+                label == "VOE" -> VoeExtractor(client, videoHeaders).videosFromUrl(url)
+
+                else -> extractNestedPlayer(target, visited, depth)
             }
         }.getOrElse { emptyList() }
     }
 
-    private fun getServerPriorityFromQuality(quality: String): Int = when {
-        quality.contains("StreamWish", ignoreCase = true) || quality.contains("SW", ignoreCase = true) || quality.contains("FastStream", ignoreCase = true) -> 1
-        quality.contains("FileLions", ignoreCase = true) || quality.contains("FL", ignoreCase = true) -> 2
-        quality.contains("Dood", ignoreCase = true) || quality.contains("DD", ignoreCase = true) -> 3
-        quality.contains("Uqload", ignoreCase = true) || quality.contains("US", ignoreCase = true) -> 4
-        quality.contains("VidHide", ignoreCase = true) || quality.contains("StreamP2P", ignoreCase = true) || quality.contains("PP", ignoreCase = true) -> 5
-        quality.contains("SexTB", ignoreCase = true) || quality.contains("TB", ignoreCase = true) -> 6
-        else -> 7
+    /**
+     * player.upn.one encrypts its JSON response with AES-CBC. The decrypted
+     * payload contains a signed HLS URL (including k/kx); returning the embed
+     * URL itself cannot work in ExoPlayer and treating it as Uqload rewrites
+     * it to an unrelated domain.
+     */
+    private suspend fun extractUpnVideos(target: PlayerTarget): List<Video> {
+        val playerUrl = target.url.toHttpUrlOrNull() ?: return emptyList()
+        val videoId = playerUrl.fragment?.substringBefore('&')?.trim().orEmpty()
+        if (videoId.isBlank()) return emptyList()
+
+        val playerPageUrl = playerUrl.newBuilder()
+            .fragment(null)
+            .query(null)
+            .build()
+            .toString()
+        val playerHeaders = headersFor(playerPageUrl)
+        val referrerHost = target.referer.toHttpUrlOrNull()?.host.orEmpty()
+        val apiUrl = playerUrl.newBuilder()
+            .encodedPath("/api/v1/video")
+            .query(null)
+            .fragment(null)
+            .addQueryParameter("id", videoId)
+            .addQueryParameter("w", "1920")
+            .addQueryParameter("h", "1080")
+            .apply {
+                if (referrerHost.isNotBlank()) addQueryParameter("r", referrerHost)
+            }
+            .build()
+
+        val encryptedPayload = client.newCall(GET(apiUrl, playerHeaders)).await().use {
+            it.throwIfCloudflareChallenge()
+            it.bodyString().trim()
+        }
+        val payload = decryptUpnPayload(encryptedPayload) ?: return emptyList()
+        val data = runCatching { JSONObject(payload) }.getOrNull() ?: return emptyList()
+        val playlists = listOf("cfNative", "source", "cf")
+            .map { data.optString(it).trim() }
+            .filter { it.startsWith("http", ignoreCase = true) && ".m3u8" in it.lowercase() }
+            .distinct()
+
+        for (playlist in playlists) {
+            val videos = runCatching {
+                playlistUtils.extractFromHls(
+                    playlistUrl = playlist,
+                    referer = playerPageUrl,
+                    masterHeaders = playerHeaders,
+                    videoHeaders = playerHeaders,
+                    videoNameGen = { "US - $it" },
+                )
+            }.getOrDefault(emptyList())
+            if (videos.isNotEmpty()) return videos
+        }
+        return emptyList()
+    }
+
+    private fun decryptUpnPayload(encryptedHex: String): String? = runCatching {
+        if (encryptedHex.length % 2 != 0 || !UPN_HEX_REGEX.matches(encryptedHex)) return null
+        val encrypted = ByteArray(encryptedHex.length / 2) { index ->
+            encryptedHex.substring(index * 2, index * 2 + 2).toInt(16).toByte()
+        }
+        val cipher = Cipher.getInstance("AES/CBC/PKCS5Padding")
+        cipher.init(
+            Cipher.DECRYPT_MODE,
+            SecretKeySpec(UPN_AES_KEY.toByteArray(Charsets.UTF_8), "AES"),
+            IvParameterSpec(UPN_AES_IV.toByteArray(Charsets.UTF_8)),
+        )
+        cipher.doFinal(encrypted).toString(Charsets.UTF_8)
+    }.getOrNull()
+
+    private suspend fun extractNestedPlayer(
+        target: PlayerTarget,
+        visited: MutableSet<String>,
+        depth: Int,
+    ): List<Video> {
+        val pageHeaders = headersFor(target.referer)
+        val response = client.newCall(GET(target.url, pageHeaders)).await()
+        val body = response.use {
+            it.throwIfCloudflareChallenge()
+            it.bodyString()
+        }
+        val nestedTargets = extractPlayerUrls(body, target.url)
+            .filterNot { it == target.url }
+            .map { PlayerTarget(normalizeServerLabel(target.label, it.lowercase()), it, target.url) }
+
+        val videos = mutableListOf<Video>()
+        for (nested in nestedTargets) {
+            videos += extractVideos(nested, visited, depth + 1)
+        }
+        return videos
+    }
+
+    private fun normalizeServerLabel(label: String, url: String = ""): String {
+        val clean = label.trim().uppercase()
+        return when {
+            "streamwish" in url || "strwish" in url || "embedwish" in url ||
+                "faststream" in url || "filelions" in url || clean in setOf("SW", "FL") -> clean.ifBlank { "SW" }
+
+            "dood" in url || "ds2play" in url || clean in setOf("DD", "DOOD") -> "DD"
+
+            "streamtape" in url || clean in setOf("ST", "STREAMTAPE") -> "ST"
+
+            "player.upn." in url || "upn.one" in url -> "UPN"
+
+            "uqload" in url || clean == "UQLOAD" -> "UQLOAD"
+
+            clean == "US" -> "US"
+
+            "mixdrop" in url || clean in setOf("MD", "MIXDROP") -> "MD"
+
+            "vidhide" in url || "streamhide" in url || "streamp2p" in url ||
+                clean in setOf("PP", "VIDHIDE") -> "PP"
+
+            "voe." in url || clean == "VOE" -> "VOE"
+
+            "sextb" in url || clean == "TB" -> "TB"
+
+            else -> clean.ifBlank { "TB" }
+        }
+    }
+
+    private fun headersFor(referer: String): Headers {
+        val origin = referer.toHttpUrlOrNull()?.let { "${it.scheme}://${it.host}" } ?: baseUrl
+        return headers.newBuilder()
+            .set("Referer", referer)
+            .set("Origin", origin)
+            .build()
+    }
+
+    private fun normalizeUrl(rawUrl: String): String? {
+        val clean = rawUrl.trim().trim('"', '\'')
+        if (clean.isBlank()) return null
+        return when {
+            clean.startsWith("//") -> "https:$clean"
+            clean.startsWith("/") -> "$baseUrl$clean"
+            clean.startsWith("http://") || clean.startsWith("https://") -> clean
+            else -> "$baseUrl/${clean.removePrefix("/")}"
+        }
+    }
+
+    private fun Response.rememberCatalogPath() {
+        val resolvedPath = request.url.encodedPath.substringBefore("/pg-").trimEnd('/')
+        val stablePath = when {
+            resolvedPath.startsWith("/jav-censored-") -> "/jav-censored"
+            resolvedPath.startsWith("/jav-uncensored-") -> "/jav-uncensored"
+            resolvedPath.startsWith("/jav-amateur-") -> "/jav-amateur"
+            resolvedPath.startsWith("/jav-subtitle-") -> "/jav-subtitle"
+            resolvedPath.startsWith("/genre/uncensored-leaked-") -> "/genre/uncensored-leaked"
+            else -> return
+        }
+        resolvedCatalogPaths[stablePath] = resolvedPath
+    }
+
+    private fun Response.throwIfCloudflareChallenge() {
+        val preview = runCatching { peekBody(CHALLENGE_PEEK_BYTES).string() }.getOrDefault("")
+        val cloudflareError = code in CLOUDFLARE_ERROR_CODES &&
+            (
+                header("Server")?.contains("cloudflare", ignoreCase = true) == true ||
+                    header("cf-ray") != null ||
+                    header("cf-mitigated").equals("challenge", ignoreCase = true)
+                )
+        if (cloudflareError || preview.isCloudflareChallengeHtml()) {
+            throw CloudflareBlockedException()
+        }
+    }
+
+    private fun Document.throwIfCloudflareChallenge() {
+        if (html().isCloudflareChallengeHtml()) throw CloudflareBlockedException()
+    }
+
+    private fun String.isCloudflareChallengeHtml(): Boolean {
+        val lower = lowercase()
+        return "_cf_chl_opt" in lower ||
+            "id=\"challenge-form\"" in lower ||
+            "id='challenge-form'" in lower ||
+            titleChallengeRegex.containsMatchIn(this)
+    }
+
+    private fun serverPriority(quality: String): Int = when {
+        quality.contains("SW", true) || quality.contains("StreamWish", true) -> 1
+        quality.contains("FL", true) || quality.contains("FileLions", true) -> 2
+        quality.contains("DD", true) || quality.contains("Dood", true) -> 3
+        quality.contains("ST", true) || quality.contains("StreamTape", true) -> 4
+        quality.contains("US", true) || quality.contains("UPN", true) || quality.contains("Uqload", true) -> 5
+        quality.contains("MD", true) || quality.contains("MixDrop", true) -> 6
+        quality.contains("PP", true) || quality.contains("VidHide", true) -> 7
+        quality.contains("VOE", true) -> 8
+        quality.contains("TB", true) || quality.contains("SexTB", true) -> 9
+        else -> 10
+    }
+
+    override fun videoListSelector(): String = "button.btn-player[data-id]"
+
+    override fun videoFromElement(element: Element): Video = throw UnsupportedOperationException()
+
+    override fun videoUrlParse(document: Document): String = throw UnsupportedOperationException()
+
+    private data class PlayerPayload(
+        val encryptedPlayer: String,
+        val nextToken: String,
+        val nextKey: String,
+    )
+
+    private data class PlayerTarget(
+        val label: String,
+        val url: String,
+        val referer: String,
+    )
+
+    private class CloudflareBlockedException : IOException("Cloudflare blocked SexTB. Open the page in WebView once, complete the challenge, then retry.")
+
+    companion object {
+        private const val DEFAULT_CATEGORY = "/jav-censored"
+        private const val MAX_PLAYER_DEPTH = 2
+        private const val CHALLENGE_PEEK_BYTES = 512L * 1024L
+        private const val UPN_AES_KEY = "kiemtienmua911ca"
+        private const val UPN_AES_IV = "1234567890oiuytr"
+
+        private val CLOUDFLARE_ERROR_CODES = setOf(403, 429, 503)
+        private val titleChallengeRegex = Regex("""<title>\s*(?:just a moment|attention required)[^<]*</title>""", RegexOption.IGNORE_CASE)
+        private val PT_REGEX = Regex("""window\.__pt\s*=\s*["']([^"']+)""")
+        private val PK_REGEX = Regex("""window\.__pk\s*=\s*["']([^"']+)""")
+        private val FILM_ID_REGEX = Regex("""(?:var|let|const)\s+filmId\s*=\s*(\d+)""")
+        private val PLAYER_URL_REGEX = Regex("""(?:https?:)?//[^\s"'<>\\]+""", RegexOption.IGNORE_CASE)
+        private val UPN_HEX_REGEX = Regex("""[0-9a-fA-F]+""")
+
+        private val CATEGORIES = arrayOf(
+            "Censored" to "/jav-censored",
+            "Uncensored" to "/jav-uncensored",
+            "Amateur" to "/jav-amateur",
+            "English Subtitle" to "/jav-subtitle",
+            "Uncensored Leaked" to "/genre/uncensored-leaked",
+        )
+
+        private val CURRENT_CATALOG_PATHS = mapOf(
+            "/jav-censored" to "/jav-censored-6gt09dgi",
+            "/jav-uncensored" to "/jav-uncensored-x7ibgpyt",
+            "/jav-amateur" to "/jav-amateur-b6i6vejs",
+            "/jav-subtitle" to "/jav-subtitle-iye0wdn6",
+            "/genre/uncensored-leaked" to "/genre/uncensored-leaked-8iodxgmu",
+        )
+
+        private val GENRES = arrayOf(
+            "All" to "all",
+            "Amateur" to "amateur",
+            "Anal" to "anal",
+            "Beautiful Girl" to "beautiful-girl",
+            "Big Asses" to "big-asses",
+            "Big Tits" to "big-tits",
+            "Blowjob" to "blowjob",
+            "Bondage" to "bondage",
+            "Cheating Wife" to "cheating-wife",
+            "Cosplay" to "cosplay",
+            "Creampie" to "creampie",
+            "Cumshots" to "cumshots",
+            "Deep Throat" to "deep-throat",
+            "Doggy Style" to "doggy-style",
+            "Facials" to "facials",
+            "Gonzo" to "gonzo",
+            "Handjob" to "handjob",
+            "Married Woman" to "married-woman",
+            "Massage" to "massage",
+            "Masturbation" to "masturbation",
+            "Mature Woman" to "mature-woman",
+            "Office Lady" to "office-lady",
+            "Older Sister" to "older-sister",
+            "Orgy" to "orgy",
+            "Over 4 Hours" to "over-4-hours",
+            "POV" to "pov",
+            "School Girls" to "school-girls",
+            "Sex Toys" to "sex-toys",
+            "Slender" to "slender",
+            "Squirting" to "squirting",
+            "Stepfamily" to "stepfamily",
+            "Threesome / Foursome" to "threesome---foursome",
+            "Voyeur" to "voyeur",
+            "Young Wife" to "young-wife",
+        )
+
+        private val STUDIOS = arrayOf(
+            "All" to "all",
+            "Alice Japan" to "alice-japan",
+            "Attackers" to "attackers",
+            "Center Village" to "center-village",
+            "Deep's" to "deep-s",
+            "E-body" to "e-body",
+            "Faleno" to "faleno",
+            "Fitch" to "fitch",
+            "Glory Quest" to "glory-quest",
+            "Hunter" to "hunter",
+            "Idea Pocket" to "idea-pocket",
+            "K M Produce" to "k-m-produce",
+            "Kawaii" to "kawaii",
+            "Madonna" to "madonna",
+            "Maxing" to "maxing",
+            "Moodyz" to "moodyz",
+            "Nadeshiko" to "nadeshiko",
+            "Nagae Style" to "nagae-style",
+            "Oppai" to "oppai",
+            "Premium" to "premium",
+            "Prestige" to "prestige",
+            "Prestige Premium" to "prestige-premium",
+            "S1 No.1 Style" to "s1-no-1-style",
+            "SOD Create" to "sod-create",
+            "Tameike Goro" to "tameike-goro",
+            "U & K" to "u---k",
+            "Venus" to "venus",
+            "Wanz Factory" to "wanz-factory",
+        )
+
+        private val QUALITIES = arrayOf(
+            "All" to "all",
+            "HD" to "hd",
+            "SD" to "sd",
+        )
+
+        private val YEARS: Array<Pair<String, String>> = buildList {
+            add("All" to "all")
+            val currentYear = Calendar.getInstance().get(Calendar.YEAR)
+            for (year in currentYear downTo 2016) add(year.toString() to year.toString())
+        }.toTypedArray()
+
+        private val SORTS = arrayOf(
+            "Last Updated" to "desc",
+            "New Release" to "release",
+            "Most Liked" to "liked",
+            "Most Favorite" to "favorite",
+            "Most Viewed" to "viewed",
+            "Most Viewed Day" to "viewed-day",
+            "Most Viewed Week" to "viewed-week",
+            "Most Viewed Month" to "viewed-month",
+        )
     }
 }

@@ -4,4 +4,18 @@ build/
 .kotlin/
 local.properties
 scratch/
+__pycache__/
+*.py[cod]
+*.log
+.release_*_done
+
+# Published APKs live only in /apk.
+/*.apk
+/apk/apk/
+/apk/index.json
+/apk/index.min.json
+/apk/repo.json
+
+# Keep unpublished or experimental builds out of the public repository.
+/staging/
 

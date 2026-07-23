@@ -21,6 +21,8 @@ import eu.kanade.tachiyomi.animesource.online.ParsedAnimeHttpSource
 import eu.kanade.tachiyomi.network.GET
 import eu.kanade.tachiyomi.network.await
 import eu.kanade.tachiyomi.network.awaitSuccess
+import eu.kanade.tachiyomi.util.asJsoup
+import keiyoushi.lib.jsunpacker.JsUnpacker
 import keiyoushi.utils.bodyString
 import keiyoushi.utils.getPreferencesLazy
 import keiyoushi.utils.parallelCatchingFlatMapBlocking
@@ -29,10 +31,11 @@ import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import okhttp3.Request
 import okhttp3.Response
+import org.jsoup.Jsoup
 import org.jsoup.nodes.Document
 import org.jsoup.nodes.Element
 import org.jsoup.select.Elements
-import java.net.URLEncoder
+import java.io.IOException
 
 class SupJav2(override val lang: String = "en") :
     ParsedAnimeHttpSource(),
@@ -44,17 +47,15 @@ class SupJav2(override val lang: String = "en") :
 
     override val supportsLatest = true
 
+    /*
+     * Keep NetworkHelper's Android UA and cookie jar. A forced Windows UA
+     * makes Cloudflare's WebView clearance cookie unusable by the app client.
+     */
     override fun headersBuilder() = super.headersBuilder()
         .set("Referer", "$baseUrl/")
         .set("Origin", baseUrl)
-        .set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36")
         .set("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8")
         .set("Accept-Language", "en-US,en;q=0.9")
-        .set("Sec-Fetch-Dest", "document")
-        .set("Sec-Fetch-Mode", "navigate")
-        .set("Sec-Fetch-Site", "same-origin")
-        .set("Sec-Fetch-User", "?1")
-        .set("Upgrade-Insecure-Requests", "1")
 
     private val langPath = when (lang) {
         "en" -> ""
@@ -66,7 +67,7 @@ class SupJav2(override val lang: String = "en") :
     // ============================== Popular ===============================
     override fun popularAnimeRequest(page: Int) = GET("$baseUrl$langPath/popular${if (page > 1) "/page/$page" else ""}", headers)
 
-    override fun popularAnimeSelector() = "div.posts > div.post > a, div.posts > div.post, div.post > a, div.post"
+    override fun popularAnimeSelector() = "div.posts > div.post > a"
 
     override fun popularAnimeFromElement(element: Element) = SAnime.create().apply {
         val link = if (element.tagName() == "a") element else (element.selectFirst("a") ?: element)
@@ -106,7 +107,19 @@ class SupJav2(override val lang: String = "en") :
         }
     }
 
-    override fun popularAnimeNextPageSelector() = "div.pagination li.active:not(:nth-last-child(2)), div.pagination a.next, div.pagination a[rel=next], div.pagination .next"
+    override fun popularAnimeNextPageSelector() = "div.pagination li.active + li a, div.pagination a.next, div.pagination a[rel=next]"
+
+    override fun popularAnimeParse(response: Response): AnimesPage {
+        response.throwIfCloudflareChallenge()
+        val document = response.asJsoup()
+        document.throwIfCloudflareChallenge()
+        return AnimesPage(
+            document.select(popularAnimeSelector())
+                .map(::popularAnimeFromElement)
+                .distinctBy { it.url },
+            document.selectFirst(popularAnimeNextPageSelector()) != null,
+        )
+    }
 
     // =============================== Latest ===============================
     override fun latestUpdatesRequest(page: Int) = GET("$baseUrl$langPath${if (page > 1) "/page/$page" else ""}", headers)
@@ -116,6 +129,21 @@ class SupJav2(override val lang: String = "en") :
     override fun latestUpdatesFromElement(element: Element) = popularAnimeFromElement(element)
 
     override fun latestUpdatesNextPageSelector() = popularAnimeNextPageSelector()
+
+    override fun latestUpdatesParse(response: Response): AnimesPage {
+        response.throwIfCloudflareChallenge()
+        val document = response.asJsoup()
+        document.throwIfCloudflareChallenge()
+        val anime = document.select(latestUpdatesSelector())
+            .map(::latestUpdatesFromElement)
+            .distinctBy { it.url }
+        val path = response.request.url.encodedPath.trimEnd('/')
+        val landingPath = langPath.ifBlank { "/" }.trimEnd('/').ifBlank { "/" }
+        val hasNext = document.selectFirst(latestUpdatesNextPageSelector()) != null ||
+            (path.ifBlank { "/" } == landingPath && anime.isNotEmpty())
+
+        return AnimesPage(anime, hasNext)
+    }
 
     // =============================== Search ===============================
     override suspend fun getSearchAnime(page: Int, query: String, filters: AnimeFilterList): AnimesPage {
@@ -168,13 +196,22 @@ class SupJav2(override val lang: String = "en") :
             }
 
             query.isNotBlank() -> {
-                val encodedQuery = URLEncoder.encode(query.trim(), "UTF-8")
-                GET("$baseUrl$langPath$pagePath/?s=$encodedQuery", headers)
+                val url = "$baseUrl$langPath$pagePath/".toHttpUrl().newBuilder()
+                    .addQueryParameter("s", query.trim())
+                    .build()
+                GET(url, headers)
             }
 
             else -> {
                 val category = filters.filterIsInstance<CategoryFilter>().firstOrNull()?.toUriPart()
-                val tag = filters.filterIsInstance<TagFilter>().firstOrNull()?.toUriPart()
+                val customTag = filters.filterIsInstance<TagSlugFilter>().firstOrNull()
+                    ?.state
+                    ?.trim()
+                    ?.lowercase()
+                    ?.replace(Regex("""[^a-z0-9-]+"""), "-")
+                    ?.trim('-')
+                val tag = customTag?.takeIf(String::isNotBlank)
+                    ?: filters.filterIsInstance<TagFilter>().firstOrNull()?.toUriPart()
                 val sort = filters.filterIsInstance<SortFilter>().firstOrNull()?.toUriPart()
 
                 val url = when {
@@ -194,10 +231,23 @@ class SupJav2(override val lang: String = "en") :
 
     override fun searchAnimeNextPageSelector() = popularAnimeNextPageSelector()
 
+    override fun searchAnimeParse(response: Response): AnimesPage {
+        response.throwIfCloudflareChallenge()
+        val document = response.asJsoup()
+        document.throwIfCloudflareChallenge()
+        return AnimesPage(
+            document.select(searchAnimeSelector())
+                .map(::searchAnimeFromElement)
+                .distinctBy { it.url },
+            document.selectFirst(searchAnimeNextPageSelector()) != null,
+        )
+    }
+
     // ============================== Filters ===============================
     override fun getFilterList(): AnimeFilterList = AnimeFilterList(
         CategoryFilter(),
         TagFilter(),
+        TagSlugFilter(),
         SortFilter(),
     )
 
@@ -211,20 +261,23 @@ class SupJav2(override val lang: String = "en") :
 
     class CategoryFilter : UriPartFilter("Category", CATEGORIES)
     class TagFilter : UriPartFilter("Tag", TAGS)
+    class TagSlugFilter : AnimeFilter.Text("Custom tag slug (optional)")
     class SortFilter : UriPartFilter("Sort", SORTS)
 
     // =========================== Anime Details ============================
     override fun animeDetailsParse(document: Document) = SAnime.create().apply {
+        document.throwIfCloudflareChallenge()
         val content = document.selectFirst("div.content > div.post-meta")
             ?: document.selectFirst("div.post-meta")
         if (content != null) {
             title = content.selectFirst("h2")?.text() ?: ""
-            thumbnail_url = content.selectFirst("img")?.let { img ->
-                val rawThumb = img.attr("data-original")
-                    .ifBlank { img.attr("data-src") }
-                    .ifBlank { img.attr("src") }
-                    .ifBlank { img.absUrl("src") }
-                when {
+            val image: Element? = content.selectFirst("img")
+            if (image != null) {
+                val rawThumb = image.attr("data-original")
+                    .ifBlank { image.attr("data-src") }
+                    .ifBlank { image.attr("src") }
+                    .ifBlank { image.absUrl("src") }
+                thumbnail_url = when {
                     rawThumb.startsWith("//") -> "https:$rawThumb"
                     rawThumb.startsWith("/") -> "$baseUrl$rawThumb"
                     else -> rawThumb
@@ -254,6 +307,7 @@ class SupJav2(override val lang: String = "en") :
     }
 
     override fun episodeListParse(response: Response): List<SEpisode> {
+        response.throwIfCloudflareChallenge()
         val episode = SEpisode.create().apply {
             name = "JAV"
             episode_number = 1F
@@ -269,10 +323,12 @@ class SupJav2(override val lang: String = "en") :
 
     // ============================ Video Links =============================
     override fun videoListParse(response: Response): List<Video> {
+        response.throwIfCloudflareChallenge()
         val doc = response.useAsJsoup()
+        doc.throwIfCloudflareChallenge()
+        val pageReferer = response.request.url.toString()
 
-        val players = doc.select("div.btnst a, div.btns a, a.btn-server, div.download-links a, div.downloads a, a[data-link], a[data-url], a[href*='supjav.php']")
-            .distinct()
+        val players = doc.select("div.btnst a[data-link], div.btns a[data-link], a.btn-server[data-link], a[href*='supjav.php']")
             .mapNotNull { element ->
                 val label = cleanServerLabel(element.text())
                 val link = element.attr("data-link")
@@ -282,10 +338,12 @@ class SupJav2(override val lang: String = "en") :
                 if (link.isBlank() || link.startsWith("javascript:", ignoreCase = true)) {
                     return@mapNotNull null
                 }
-                label to link
+                PlayerRequest(label, link, pageReferer)
             }
+            .distinctBy { it.id }
 
         return players.parallelCatchingFlatMapBlocking(::videosFromPlayer)
+            .distinctBy { it.videoUrl }
     }
 
     private fun cleanServerLabel(text: String): String {
@@ -305,12 +363,9 @@ class SupJav2(override val lang: String = "en") :
 
     private val playlistUtils by lazy { PlaylistUtils(client, headers) }
     private val streamtapeExtractor by lazy { StreamTapeExtractor(client) }
-    private val streamwishExtractor by lazy { StreamWishExtractor(client, headers) }
-    private val voeExtractor by lazy { VoeExtractor(client, headers) }
     private val doodExtractor by lazy { DoodExtractor(client) }
     private val mixdropExtractor by lazy { MixDropExtractor(client) }
     private val uqloadExtractor by lazy { UqloadExtractor(client) }
-    private val vidhideExtractor by lazy { VidHideExtractor(client, headers) }
 
     private val protectorHeaders by lazy {
         super.headersBuilder().set("Referer", "$PROTECTOR_URL/").build()
@@ -336,25 +391,53 @@ class SupJav2(override val lang: String = "en") :
     }
 
     private suspend fun fetchRedirect(code: String): String? = runCatching {
-        val targetUrl = if (code.startsWith("http://") || code.startsWith("https://") || code.contains("supjav.php")) code else "$PROTECTOR_URL/supjav.php?c=$code"
+        val targetUrl = if (
+            code.startsWith("http://") ||
+            code.startsWith("https://") ||
+            code.contains("supjav.php")
+        ) {
+            code
+        } else {
+            "$PROTECTOR_URL/supjav.php?c=$code"
+        }
+
         noRedirectClient.newCall(GET(targetUrl, protectorHeaders))
             .await()
-            .use { it.headers["location"] }
+            .use { redirectResponse ->
+                redirectResponse.throwIfCloudflareChallenge()
+                val location = redirectResponse.header("Location")?.trim().orEmpty()
+                if (location.isBlank()) return@use null
+                redirectResponse.request.url.resolve(location)?.toString()
+            }
     }.getOrNull()
 
-    private suspend fun videosFromPlayer(player: Pair<String, String>): List<Video> {
-        val (hoster, id) = player
-        val url = resolveProtectorRedirect(id) ?: return emptyList()
+    private suspend fun videosFromPlayer(player: PlayerRequest): List<Video> {
+        val url = resolveProtectorRedirect(player.id) ?: return emptyList()
+        val hoster = player.label
+        val embedHeaders = embedHeaders(player.pageReferer)
 
         val normalizedHoster = when {
             hoster in SUPPORTED_SERVERS -> hoster
+
             url.contains("streamtape", ignoreCase = true) -> "ST"
+
             url.contains("voe", ignoreCase = true) -> "VOE"
-            url.contains("streamwish", ignoreCase = true) || url.contains("wish", ignoreCase = true) || url.contains("fastshow", ignoreCase = true) -> "FST"
+
+            url.contains("streamwish", ignoreCase = true) ||
+                url.contains("wish", ignoreCase = true) ||
+                url.contains("fastshow", ignoreCase = true) ||
+                url.contains("fc2stream", ignoreCase = true) -> "FST"
+
+            url.contains("turbovid", ignoreCase = true) -> "TV"
+
             url.contains("dood", ignoreCase = true) || url.contains("ds2play", ignoreCase = true) -> "DOOD"
+
             url.contains("mixdrop", ignoreCase = true) -> "MIXDROP"
+
             url.contains("uqload", ignoreCase = true) -> "UQLOAD"
+
             url.contains("vidhide", ignoreCase = true) -> "VIDHIDE"
+
             else -> hoster
         }
 
@@ -362,9 +445,16 @@ class SupJav2(override val lang: String = "en") :
             when (normalizedHoster) {
                 "ST" -> streamtapeExtractor.videosFromUrl(url)
 
-                "VOE" -> voeExtractor.videosFromUrl(url)
+                "VOE" -> VoeExtractor(client, embedHeaders).videosFromUrl(url)
 
-                "FST" -> streamwishExtractor.videosFromUrl(url)
+                "FST" -> {
+                    if (url.contains("fc2stream", ignoreCase = true)) {
+                        extractFstFallback(url, player.pageReferer)
+                    } else {
+                        StreamWishExtractor(client, embedHeaders).videosFromUrl(url)
+                            .ifEmpty { extractFstFallback(url, player.pageReferer) }
+                    }
+                }
 
                 "DOOD" -> doodExtractor.videosFromUrl(url)
 
@@ -372,22 +462,108 @@ class SupJav2(override val lang: String = "en") :
 
                 "UQLOAD" -> uqloadExtractor.videosFromUrl(url)
 
-                "VIDHIDE" -> vidhideExtractor.videosFromUrl(url)
+                "VIDHIDE" -> VidHideExtractor(client, embedHeaders).videosFromUrl(url)
 
-                "TV" -> {
-                    val body = client.newCall(GET(url)).awaitSuccess().bodyString()
-                    val playlistUrl = body.substringAfter("var urlPlay = '", "")
-                        .substringBefore("';")
-                        .takeUnless(String::isEmpty)
-                        ?: return emptyList()
-
-                    playlistUtils.extractFromHls(playlistUrl, url, videoNameGen = { "TV - $it" })
-                        .distinctBy { it.videoUrl }
-                }
+                "TV" -> extractTvVideos(url, player.pageReferer)
 
                 else -> emptyList()
             }
         }.getOrElse { emptyList() }
+    }
+
+    /**
+     * turbovidhls currently returns HTTP 500 while still serving a valid
+     * player body. Do not use awaitSuccess here; parse the body when the
+     * expected player marker is present.
+     */
+    private suspend fun extractTvVideos(url: String, pageReferer: String): List<Video> {
+        val response = client.newCall(GET(url, embedHeaders(pageReferer))).await()
+        val body = response.use {
+            it.throwIfCloudflareChallenge()
+            it.bodyString()
+        }.replace("\\/", "/")
+
+        val document = Jsoup.parse(body, url)
+        val rawPlaylist = TV_URL_PLAY_REGEX.find(body)?.groupValues?.get(1)
+            ?: document.selectFirst("source[src*=m3u8], video[src*=m3u8]")?.attr("src")
+            ?: TV_FILE_URL_REGEX.find(body)?.groupValues?.get(1)
+            ?: return emptyList()
+        val playlistUrl = normalizePlayerUrl(rawPlaylist, url) ?: return emptyList()
+        val playerHeaders = playbackHeaders(url)
+
+        return playlistUtils.extractFromHls(
+            playlistUrl = playlistUrl,
+            referer = url,
+            masterHeaders = playerHeaders,
+            videoHeaders = playerHeaders,
+            videoNameGen = { "TV - $it" },
+        ).distinctBy { it.videoUrl }
+    }
+
+    /**
+     * Some FST clones expose a valid packed player only on the host returned
+     * by the protector. StreamWishExtractor intentionally rewrites /e/{id} to
+     * its canonical domains, so retain an absolute-host fallback here.
+     */
+    private suspend fun extractFstFallback(url: String, pageReferer: String): List<Video> {
+        val playerHeaders = playbackHeaders(url)
+        val response = client.newCall(GET(url, embedHeaders(pageReferer))).await()
+        val body = response.use {
+            it.throwIfCloudflareChallenge()
+            it.bodyString()
+        }
+        val document = Jsoup.parse(body, url)
+        val scripts = document.select("script").map { it.data() }
+        val expandedScripts = scripts.map { script ->
+            if ("eval(function(p,a,c" in script) {
+                runCatching { JsUnpacker.unpackAndCombine(script) }.getOrDefault(script)
+            } else {
+                script
+            }
+        }
+        val normalizedScript = expandedScripts.joinToString("\n")
+            .replace("\\/", "/")
+            .replace("\\u0026", "&")
+        val rawPlaylist = FST_M3U8_REGEX.find(normalizedScript)?.value
+            ?: document.selectFirst("source[src*=m3u8], video[src*=m3u8]")?.attr("src")
+            ?: return emptyList()
+        val playlistUrl = normalizePlayerUrl(rawPlaylist, url) ?: return emptyList()
+
+        return playlistUtils.extractFromHls(
+            playlistUrl = playlistUrl,
+            referer = url,
+            masterHeaders = playerHeaders,
+            videoHeaders = playerHeaders,
+            videoNameGen = { "FST - $it" },
+        ).distinctBy { it.videoUrl }
+    }
+
+    private fun playbackHeaders(referer: String): okhttp3.Headers {
+        val pageUrl = referer.toHttpUrlOrNull()
+        val origin = pageUrl?.let { "${it.scheme}://${it.host}" } ?: baseUrl
+        return headers.newBuilder()
+            .set("Referer", referer)
+            .set("Origin", origin)
+            .build()
+    }
+
+    private fun embedHeaders(pageReferer: String): okhttp3.Headers {
+        val pageUrl = pageReferer.toHttpUrlOrNull()
+        val origin = pageUrl?.let { "${it.scheme}://${it.host}" } ?: baseUrl
+        return headers.newBuilder()
+            .set("Referer", pageReferer)
+            .set("Origin", origin)
+            .build()
+    }
+
+    private fun normalizePlayerUrl(rawUrl: String, pageUrl: String): String? {
+        val clean = rawUrl.trim().trim('"', '\'')
+        if (clean.isBlank()) return null
+        return when {
+            clean.startsWith("//") -> "https:$clean"
+            clean.startsWith("http://") || clean.startsWith("https://") -> clean
+            else -> pageUrl.toHttpUrlOrNull()?.resolve(clean)?.toString()
+        }
     }
 
     override fun videoListSelector(): String = "div.content"
@@ -417,10 +593,54 @@ class SupJav2(override val lang: String = "en") :
         ).reversed()
     }
 
+    private fun Response.throwIfCloudflareChallenge() {
+        val preview = runCatching { peekBody(CHALLENGE_PEEK_BYTES).string() }.getOrDefault("")
+        val cloudflareError = code in CLOUDFLARE_ERROR_CODES &&
+            (
+                header("Server")?.contains("cloudflare", ignoreCase = true) == true ||
+                    header("cf-ray") != null ||
+                    header("cf-mitigated").equals("challenge", ignoreCase = true)
+                )
+        if (cloudflareError || preview.isCloudflareChallengeHtml()) {
+            throw CloudflareBlockedException()
+        }
+    }
+
+    private fun Document.throwIfCloudflareChallenge() {
+        if (html().isCloudflareChallengeHtml()) throw CloudflareBlockedException()
+    }
+
+    private fun String.isCloudflareChallengeHtml(): Boolean {
+        val lower = lowercase()
+        return "_cf_chl_opt" in lower ||
+            "id=\"challenge-form\"" in lower ||
+            "id='challenge-form'" in lower ||
+            TITLE_CHALLENGE_REGEX.containsMatchIn(this)
+    }
+
+    private class CloudflareBlockedException : IOException("Cloudflare blocked SupJav 2. Open the page in WebView once, complete the challenge, then retry.")
+
+    private data class PlayerRequest(
+        val label: String,
+        val id: String,
+        val pageReferer: String,
+    )
+
     companion object {
         const val PREFIX_SEARCH = "id:"
 
         private const val PROTECTOR_URL = "https://lk1.supremejav.com"
+        private const val CHALLENGE_PEEK_BYTES = 512L * 1024L
+
+        private val CLOUDFLARE_ERROR_CODES = setOf(403, 429, 503)
+        private val TITLE_CHALLENGE_REGEX =
+            Regex("""<title>\s*(?:just a moment|attention required)[^<]*</title>""", RegexOption.IGNORE_CASE)
+        private val TV_URL_PLAY_REGEX =
+            Regex("""\b(?:(?:var|let|const)\s+)?urlPlay\s*=\s*["']([^"']+)["']""", RegexOption.IGNORE_CASE)
+        private val TV_FILE_URL_REGEX =
+            Regex("""\bfile\s*:\s*["'](https?://[^"']+\.m3u8[^"']*)["']""", RegexOption.IGNORE_CASE)
+        private val FST_M3U8_REGEX =
+            Regex("""https?://[^\s"'<>]+\.m3u8[^\s"'<>]*""", RegexOption.IGNORE_CASE)
 
         private val SUPPORTED_SERVERS = setOf("TV", "FST", "VOE", "ST", "DOOD", "MIXDROP", "UQLOAD", "VIDHIDE")
 
@@ -431,32 +651,41 @@ class SupJav2(override val lang: String = "en") :
 
         private val CATEGORIES = arrayOf(
             Pair("All", ""),
-            Pair("Censored", "censored"),
-            Pair("Uncensored", "uncensored"),
-            Pair("Uncensored Leaked", "uncensored-leaked"),
-            Pair("VR", "vr"),
-            Pair("Reduced", "reduced"),
+            Pair("Censored JAV", "censored-jav"),
+            Pair("Uncensored JAV", "uncensored-jav"),
+            Pair("Amateur", "amateur"),
+            Pair("Reducing Mosaic", "reducing-mosaic"),
+            Pair("English Subtitles", "english-subtitles"),
+            Pair("Chinese Subtitles", "chinese-subtitles"),
         )
 
         private val TAGS = arrayOf(
             Pair("All", ""),
+            Pair("4K", "4k"),
             Pair("Amateur", "amateur"),
+            Pair("Anal", "anal"),
             Pair("Big Tits", "big-tits"),
-            Pair("Censored JAV", "censored-jav"),
+            Pair("Blowjob", "blowjob"),
+            Pair("Bondage", "bondage"),
+            Pair("Bukkake", "bukkake"),
+            Pair("Cosplay", "cosplay"),
             Pair("Creampie", "creampie"),
             Pair("Cumshot", "cumshot"),
             Pair("Documentary", "documentary"),
-            Pair("Featured", "featured"),
-            Pair("HD", "hd"),
-            Pair("Housewife", "housewife"),
+            Pair("Facials", "facials"),
+            Pair("FC2PPV", "fc2ppv"),
+            Pair("Handjob", "handjob"),
+            Pair("Lesbian", "lesbian"),
             Pair("Married Woman", "married-woman"),
-            Pair("Milf", "milf"),
-            Pair("Mosaic Removed", "mosaic-removed"),
+            Pair("Massage", "massage"),
+            Pair("Masturbation", "masturbation"),
+            Pair("Mature Woman", "mature-woman"),
+            Pair("Nurse", "nurse"),
             Pair("Pantyhose", "pantyhose"),
+            Pair("POV", "pov"),
+            Pair("School Girls", "school-girls"),
+            Pair("Slender", "slender"),
             Pair("Slut", "slut"),
-            Pair("Subtitled", "subtitled"),
-            Pair("Uncensored JAV", "uncensored-jav"),
-            Pair("VR", "vr"),
         )
 
         private val SORTS = arrayOf(
