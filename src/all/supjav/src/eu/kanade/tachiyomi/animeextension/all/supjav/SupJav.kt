@@ -455,46 +455,56 @@ class SupJav(override val lang: String = "en") :
 
     // ============================ Video Links =============================
     override fun videoListParse(response: Response): List<Video> {
-        return runCatching {
-            val body = response.bodyString()
-            // CF challenge page has no servers — empty list surfaces as "host list empty"
-            val isCfChallenge = body.contains("Just a moment", ignoreCase = true) &&
-                (
-                    body.contains("cf-browser-verification", ignoreCase = true) ||
-                        body.contains("challenge-platform", ignoreCase = true) ||
-                        body.contains("cf-mitigated", ignoreCase = true)
-                    )
-            if (isCfChallenge) {
-                return@runCatching emptyList()
+        val body = response.bodyString()
+        // CF challenge page has no servers — surface a real error instead of
+        // a silent empty list (user just saw "host list is empty").
+        val isCfChallenge = body.contains("Just a moment", ignoreCase = true) &&
+            (
+                body.contains("cf-browser-verification", ignoreCase = true) ||
+                    body.contains("challenge-platform", ignoreCase = true) ||
+                    body.contains("cf-mitigated", ignoreCase = true)
+                )
+        if (isCfChallenge) {
+            throw Exception("SupJav: Cloudflare check is blocking the video page. Open the entry in WebView, solve the check, then retry.")
+        }
+
+        val doc = Jsoup.parse(body, response.request.url.toString())
+        val players = collectPlayers(doc, body)
+        if (players.isEmpty()) {
+            throw Exception("SupJav: no video servers found on the episode page (site layout may have changed).")
+        }
+
+        // ST / FST first — TurboVid (TV) often serves ad-only playlists
+        val ordered = players.sortedBy { (name, _) ->
+            when (name) {
+                "ST" -> 0
+                "FST" -> 1
+                "VOE" -> 2
+                "TV" -> 9
+                else -> 5
             }
+        }
 
-            val doc = Jsoup.parse(body, response.request.url.toString())
-            val players = collectPlayers(doc, body)
-            if (players.isEmpty()) return@runCatching emptyList()
-
-            // ST / FST first — TurboVid (TV) often serves ad-only playlists
-            val ordered = players.sortedBy { (name, _) ->
-                when (name) {
-                    "ST" -> 0
-                    "FST" -> 1
-                    "VOE" -> 2
-                    "TV" -> 9
-                    else -> 5
+        // Resolve all servers in parallel — sequential resolution with
+        // protector redirects + playlist probes can take 30s+ and the
+        // app gives up before any video appears.
+        hosterFailReasons.clear()
+        val videoList = runBlocking {
+            ordered.map { player ->
+                async {
+                    runCatching { videosFromPlayer(player) }.getOrDefault(emptyList())
                 }
-            }
-
-            // Resolve all servers in parallel — sequential resolution with
-            // protector redirects + playlist probes can take 30s+ and the
-            // app gives up before any video appears.
-            val videoList = runBlocking {
-                ordered.map { player ->
-                    async {
-                        runCatching { videosFromPlayer(player) }.getOrDefault(emptyList())
-                    }
-                }.flatMap { it.await() }
-            }
-            videoList.distinctBy { it.videoUrl ?: it.url }
-        }.getOrDefault(emptyList())
+            }.flatMap { it.await() }
+        }
+        val result = videoList.distinctBy { it.videoUrl ?: it.url }
+        if (result.isEmpty()) {
+            val reasons = hosterFailReasons.entries
+                .joinToString("; ") { (k, v) -> "$k: $v" }
+                .take(500)
+                .ifBlank { "unknown error" }
+            throw Exception("SupJav: all ${players.size} server(s) failed — $reasons")
+        }
+        return result
     }
 
     /** Collect server buttons: DOM first, then HTML regex for hex data-link tokens. */
@@ -563,6 +573,9 @@ class SupJav(override val lang: String = "en") :
     private val noRedirectClient by lazy {
         client.newBuilder().followRedirects(false).build()
     }
+
+    /** Last failure reason per hoster — surfaced when every server fails. */
+    private val hosterFailReasons = java.util.concurrent.ConcurrentHashMap<String, String>()
 
     private fun detectHoster(name: String, link: String): String {
         val upperName = name.uppercase()
@@ -657,7 +670,12 @@ class SupJav(override val lang: String = "en") :
 
     private suspend fun videosFromPlayer(player: Pair<String, String>): List<Video> {
         val (rawHosterName, rawLink) = player
-        val resolved = resolveProtectorRedirect(rawLink) ?: return emptyList()
+        val label = rawHosterName.ifBlank { "SERVER" }
+        val resolved = resolveProtectorRedirect(rawLink)
+        if (resolved == null) {
+            hosterFailReasons[label] = "link protector resolve failed"
+            return emptyList()
+        }
         // Drop #fragment (e.g. turbovidhls.com/t/xxx#supjav.com@title.mp4)
         val url = resolved.substringBefore('#').ifBlank { resolved }
         val host = url.toHttpUrlOrNull()?.host.orEmpty().lowercase()
@@ -704,6 +722,10 @@ class SupJav(override val lang: String = "en") :
                 }
             }
 
+            if (rawVideos.isEmpty()) {
+                hosterFailReasons[hoster.ifBlank { label }] = "no playable stream found"
+            }
+
             rawVideos.map { video ->
                 // Keep hoster-page Referer for CDN URLs (tapecontent, hls CDN).
                 // Using CDN host as Referer breaks StreamTape / FST auth.
@@ -717,7 +739,10 @@ class SupJav(override val lang: String = "en") :
                 val vidHeaders = video.headers ?: buildMediaHeaders(keepReferer)
                 video.copy(headers = fixPlaybackHeaders(vidHeaders, keepReferer, hoster))
             }
-        }.getOrDefault(emptyList())
+        }.getOrElse { e ->
+            hosterFailReasons[hoster.ifBlank { label }] = (e.message ?: e.javaClass.simpleName).take(150)
+            emptyList()
+        }
     }
 
     /** Playback headers: correct Referer/Origin for each hoster family. */
@@ -995,11 +1020,12 @@ class SupJav(override val lang: String = "en") :
             .set("Referer", if (cleanUrl.endsWith("/")) cleanUrl else "$cleanUrl/")
             .build()
 
-        // Probe playlist — drop if it's ad-only junk
+        // Probe playlist — must be a real playlist, drop ad-only junk
         val probe = runCatching {
             client.newCall(GET(playlistUrl, hlsHeaders)).execute().bodyString()
         }.getOrDefault("")
-        if (probe.contains("tiktokcdn", ignoreCase = true) ||
+        if (!probe.contains("#EXTM3U") ||
+            probe.contains("tiktokcdn", ignoreCase = true) ||
             probe.contains("ad-site", ignoreCase = true)
         ) {
             return emptyList()
@@ -1268,6 +1294,13 @@ class SupJav(override val lang: String = "en") :
         for (master in candidates) {
             if (!master.contains("m3u8", ignoreCase = true) && !master.contains("/hls")) continue
             val abs = resolveRelative(master, pageUrl)
+            // Skip dead playlists: some CDN mirrors 403 (e.g. premilkyway),
+            // and extractFromHls would emit the dead URL as a fake video
+            // before the working mirror (master.txt /hls3/) is ever tried.
+            val playlistOk = runCatching {
+                client.newCall(GET(abs, hlsHeaders)).execute().bodyString().contains("#EXTM3U")
+            }.getOrDefault(false)
+            if (!playlistOk) continue
             val extracted = runCatching {
                 playlistUtils.extractFromHls(
                     abs,
@@ -1279,11 +1312,6 @@ class SupJav(override val lang: String = "en") :
             }.getOrDefault(emptyList())
             videos.addAll(extracted)
             if (videos.isNotEmpty()) break
-            // Direct link fallback
-            if (abs.contains(".m3u8")) {
-                videos.add(Video(abs, "$prefix - HLS", abs, headers = hlsHeaders))
-                break
-            }
         }
         return videos.distinctBy { it.videoUrl }
     }
