@@ -1,0 +1,19 @@
+ext {
+    extName = 'SexTB'
+    extClass = '.SexTBFactory'
+    extVersionCode = 7
+    isNsfw = true
+}
+
+apply plugin: "kei.plugins.extension.legacy"
+
+dependencies {
+    implementation(project(":lib:doodextractor"))
+    implementation(project(":lib:mixdropextractor"))
+    implementation(project(":lib:streamtapeextractor"))
+    implementation(project(":lib:streamwishextractor"))
+    implementation(project(":lib:uqloadextractor"))
+    implementation(project(":lib:vidhideextractor"))
+    implementation(project(":lib:voeextractor"))
+    implementation(project(":lib:playlistutils"))
+}

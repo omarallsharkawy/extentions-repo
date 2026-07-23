@@ -9,6 +9,7 @@ TARGETS = [
     ('all', 'supjav'),
     ('all', 'supjav2'),
     ('all', 'missav'),
+    ('all', 'sextb'),
 ]
 
 root = Path('.')
