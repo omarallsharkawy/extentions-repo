@@ -265,8 +265,8 @@
     "pkg": "eu.kanade.tachiyomi.animeextension.all.missav",
     "apk": "aniyomi-all.missav-v14.54.apk",
     "lang": "all",
-    "code": 56,
-    "version": "14.56",
+    "code": 54,
+    "version": "14.54",
     "nsfw": 1,
     "sources": [
       {
@@ -333,8 +333,8 @@
     "pkg": "eu.kanade.tachiyomi.animeextension.all.pornhub",
     "apk": "aniyomi-all.pornhub-v14.34.apk",
     "lang": "all",
-    "code": 36,
-    "version": "14.36",
+    "code": 34,
+    "version": "14.34",
     "nsfw": 1,
     "sources": [
       {
@@ -470,8 +470,8 @@
     "pkg": "eu.kanade.tachiyomi.animeextension.all.supjav",
     "apk": "aniyomi-all.supjav-v14.72.apk",
     "lang": "all",
-    "code": 73,
-    "version": "14.73",
+    "code": 72,
+    "version": "14.72",
     "nsfw": 1,
     "sources": [
       {
