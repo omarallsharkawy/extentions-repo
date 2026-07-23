@@ -263,10 +263,10 @@
   {
     "name": "Aniyomi: MissAV",
     "pkg": "eu.kanade.tachiyomi.animeextension.all.missav",
-    "apk": "aniyomi-all.missav-v14.53.apk",
+    "apk": "aniyomi-all.missav-v14.54.apk",
     "lang": "all",
-    "code": 53,
-    "version": "14.53",
+    "code": 54,
+    "version": "14.54",
     "nsfw": 1,
     "sources": [
       {
@@ -331,10 +331,10 @@
   {
     "name": "Aniyomi: PornHub",
     "pkg": "eu.kanade.tachiyomi.animeextension.all.pornhub",
-    "apk": "aniyomi-all.pornhub-v14.33.apk",
+    "apk": "aniyomi-all.pornhub-v14.34.apk",
     "lang": "all",
-    "code": 33,
-    "version": "14.33",
+    "code": 34,
+    "version": "14.34",
     "nsfw": 1,
     "sources": [
       {
@@ -468,10 +468,10 @@
   {
     "name": "Aniyomi: SupJav",
     "pkg": "eu.kanade.tachiyomi.animeextension.all.supjav",
-    "apk": "aniyomi-all.supjav-v14.70.apk",
+    "apk": "aniyomi-all.supjav-v14.71.apk",
     "lang": "all",
-    "code": 70,
-    "version": "14.70",
+    "code": 71,
+    "version": "14.71",
     "nsfw": 1,
     "sources": [
       {
