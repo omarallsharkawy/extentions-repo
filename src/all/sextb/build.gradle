@@ -1,7 +1,7 @@
 ext {
     extName = 'SexTB'
     extClass = '.SexTBFactory'
-    extVersionCode = 10
+    extVersionCode = 12
     isNsfw = true
 }
 

@@ -50,28 +50,53 @@ class SexTB : ParsedAnimeHttpSource() {
     private val playlistUtils by lazy { PlaylistUtils(client, headers) }
 
     // Popular Anime
-    override fun popularAnimeRequest(page: Int): Request = GET("$baseUrl/trending/page/$page/", headers)
+    override fun popularAnimeRequest(page: Int): Request = GET("$baseUrl/genre/censored?genre=all&studio=all&quality=all&year=all&sort=viewed&page=$page", headers)
 
-    override fun popularAnimeSelector(): String = "div.video-item, div.post-item, div.item, article.post"
+    override fun popularAnimeSelector(): String = "div.tray-item"
 
     override fun popularAnimeFromElement(element: Element): SAnime = SAnime.create().apply {
-        val link = element.selectFirst("a[href]") ?: element
+        val link = element.selectFirst("a") ?: element
         setUrlWithoutDomain(link.attr("href"))
-        title = element.selectFirst("h2, h3, .title, .entry-title")?.text()
-            ?.ifBlank { null } ?: link.attr("title").ifBlank { link.text() }
-        thumbnail_url = element.selectFirst("img")?.let { img ->
-            img.attr("data-src").ifEmpty {
-                img.attr("data-lazy-src").ifEmpty {
-                    img.attr("src")
-                }
+
+        val img = element.selectFirst("img")
+        if (img != null) {
+            val rawTitle = element.selectFirst("div.tray-item-title")?.text()
+                ?.ifBlank { img.attr("alt") }
+                ?: img.attr("alt")
+            title = rawTitle.trim()
+
+            val rawThumb = img.attr("data-src")
+                .ifBlank { img.attr("src") }
+                .ifBlank { img.absUrl("data-src") }
+                .ifBlank { img.absUrl("src") }
+
+            thumbnail_url = when {
+                rawThumb.startsWith("//") -> "https:$rawThumb"
+                rawThumb.startsWith("/") -> "$baseUrl$rawThumb"
+                else -> rawThumb
             }
+        }
+
+        if (title.isBlank()) {
+            title = link.attr("title").ifBlank { element.text() }
+        }
+
+        val code = element.selectFirst("div.tray-item-code")?.text()?.trim()
+        val duration = element.selectFirst("div.tray-item-runtime")?.text()?.trim()
+
+        if (!code.isNullOrBlank() && !title.contains(code, ignoreCase = true)) {
+            title = "[$code] $title"
+        }
+
+        if (!duration.isNullOrBlank()) {
+            title = "$title [$duration]"
         }
     }
 
-    override fun popularAnimeNextPageSelector(): String? = "a.next, .pagination a.next, a[rel=next]"
+    override fun popularAnimeNextPageSelector(): String? = "ul.pagination li.active + li a, ul.pagination li:has(a.current) + li a, div.pagination li.active + li a, div.pagination a.next, a[rel=next]"
 
     // Latest Updates
-    override fun latestUpdatesRequest(page: Int): Request = GET("$baseUrl/page/$page/", headers)
+    override fun latestUpdatesRequest(page: Int): Request = GET("$baseUrl/genre/censored?genre=all&studio=all&quality=all&year=all&sort=release&page=$page", headers)
 
     override fun latestUpdatesSelector(): String = popularAnimeSelector()
 

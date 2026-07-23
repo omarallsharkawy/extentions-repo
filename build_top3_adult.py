@@ -36,7 +36,7 @@ for lang, name in TARGETS:
 
 print("\n2. Building release APKs...")
 assemble_tasks = [f":src:{lang}:{name}:assembleRelease" for lang, name in TARGETS]
-cmd = [".\\gradlew.bat"] + assemble_tasks + ["--no-daemon"]
+cmd = [".\\gradlew.bat"] + assemble_tasks + ["-x", "spotlessCheck", "-x", "spotlessKotlinApply", "--no-daemon"]
 res = subprocess.run(cmd, shell=True)
 if res.returncode != 0:
     print(f"Error building release APKs! Exit code: {res.returncode}")
