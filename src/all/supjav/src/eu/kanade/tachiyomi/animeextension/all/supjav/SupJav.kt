@@ -62,19 +62,20 @@ class SupJav(override val lang: String = "en") :
         val img = element.selectFirst("img")
         if (img != null) {
             title = img.attr("alt").ifBlank { img.attr("title") }
-            thumbnail_url = img.absUrl("data-original").ifBlank { img.absUrl("src") }
+            thumbnail_url = getThumbnailUrl(img)
         }
         if (title.isBlank()) {
             title = link.attr("title").ifBlank { element.selectFirst("h3, h2")?.text() ?: "" }
         }
 
         val duration = element.selectFirst("span.duration, span.time, div.duration, time, .duration, .time")?.text()?.trim()
-        if (!duration.isNullOrBlank() && !title.contains(duration)) {
+            ?: element.parent()?.selectFirst("span.duration, span.time, div.duration, time, .duration, .time")?.text()?.trim()
+        if (!duration.isNullOrBlank() && title.isNotBlank() && !title.contains(duration)) {
             title = "$title [$duration]"
         }
     }
 
-    override fun popularAnimeNextPageSelector() = "div.pagination li.active:not(:nth-last-child(2)), div.pagination a.next"
+    override fun popularAnimeNextPageSelector() = "div.pagination li.active:not(:nth-last-child(2)), div.pagination a.next, div.pagination a[rel=next]"
 
     // =============================== Latest ===============================
     override fun latestUpdatesRequest(page: Int) = GET("$baseUrl$langPath/page/$page", headers)
@@ -97,8 +98,13 @@ class SupJav(override val lang: String = "en") :
             return getSearchAnime(page, "$PREFIX_SEARCH$path", filters)
         }
         if (query.startsWith(PREFIX_SEARCH)) {
-            val id = query.removePrefix(PREFIX_SEARCH)
-            return client.newCall(GET("$baseUrl/$id"))
+            val id = query.removePrefix(PREFIX_SEARCH).trim()
+            val url = when {
+                id.startsWith("http://") || id.startsWith("https://") -> id
+                id.startsWith("/") -> "$baseUrl$id"
+                else -> "$baseUrl/$id"
+            }
+            return client.newCall(GET(url, headers))
                 .awaitSuccess()
                 .use(::searchAnimeByIdParse)
         }
@@ -137,11 +143,11 @@ class SupJav(override val lang: String = "en") :
                 "$baseUrl$langPath$pagePath/?s=$encodedQuery"
             }
 
-            sort == "popular" -> "$baseUrl$langPath/popular$pagePath"
-
             category.isNotBlank() -> "$baseUrl$langPath/category/$category$pagePath"
 
             tag.isNotBlank() -> "$baseUrl$langPath/tag/$tag$pagePath"
+
+            sort == "popular" -> "$baseUrl$langPath/popular$pagePath"
 
             else -> "$baseUrl$langPath$pagePath/?s="
         }
@@ -149,11 +155,11 @@ class SupJav(override val lang: String = "en") :
         return GET(url, headers)
     }
 
-    override fun searchAnimeSelector() = "div.posts > div.post > a"
+    override fun searchAnimeSelector() = popularAnimeSelector()
 
     override fun searchAnimeFromElement(element: Element) = popularAnimeFromElement(element)
 
-    override fun searchAnimeNextPageSelector() = "div.pagination li.active:not(:nth-last-child(2)), div.pagination a.next"
+    override fun searchAnimeNextPageSelector() = popularAnimeNextPageSelector()
 
     // ============================== Filters ===============================
     override fun getFilterList() = AnimeFilterList(
@@ -195,7 +201,7 @@ class SupJav(override val lang: String = "en") :
             arrayOf(
                 Pair("All", ""),
                 Pair("Subtitled", "subtitle"),
-                Pair("High Definition", "hd"),
+                Pair("HD", "hd"),
                 Pair("VR", "vr"),
             ),
         )
@@ -207,11 +213,8 @@ class SupJav(override val lang: String = "en") :
             ?: document.selectFirst("div.content > div.post-meta h2")?.text()
             ?: document.selectFirst("h1, h2")?.text()
             ?: ""
-        thumbnail_url = content?.selectFirst("img")?.let {
-            it.absUrl("data-original").ifBlank { it.absUrl("src") }
-        } ?: document.selectFirst("div.content img")?.let {
-            it.absUrl("data-original").ifBlank { it.absUrl("src") }
-        }
+        thumbnail_url = getThumbnailUrl(content?.selectFirst("img"))
+            ?: getThumbnailUrl(document.selectFirst("div.content img"))
 
         val cats = content?.selectFirst("div.cats") ?: document.selectFirst("div.cats")
         cats?.run {
@@ -326,6 +329,27 @@ class SupJav(override val lang: String = "en") :
         return sortedWith(
             compareBy { it.quality.contains(quality) },
         ).reversed()
+    }
+
+    private fun getThumbnailUrl(img: Element?): String? {
+        if (img == null) return null
+        val src = img.attr("data-original").ifBlank {
+            img.attr("data-src").ifBlank {
+                img.attr("src")
+            }
+        }
+        if (src.isBlank()) return null
+        return when {
+            src.startsWith("//") -> "https:$src"
+
+            src.startsWith("http://") || src.startsWith("https://") -> src
+
+            else -> img.absUrl("data-original").ifBlank {
+                img.absUrl("data-src").ifBlank {
+                    img.absUrl("src")
+                }
+            }.let { if (it.startsWith("//")) "https:$it" else it }
+        }
     }
 
     companion object {

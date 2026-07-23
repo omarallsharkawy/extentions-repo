@@ -1,7 +1,7 @@
 ext {
     extName = 'SupJav'
     extClass = '.SupJavFactory'
-    extVersionCode = 68
+    extVersionCode = 70
     isNsfw = true
 }
 
