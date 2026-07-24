@@ -37,12 +37,6 @@ class ArabXN :
 
     override fun headersBuilder() = super.headersBuilder()
         .set("Referer", "$baseUrl/")
-        .set("Origin", baseUrl)
-        .set(
-            "User-Agent",
-            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 " +
-                "(KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
-        )
 
     // ============================== Popular ===============================
     // Catalog: /video/ (all videos). Page 2+ → /video/{n}
@@ -222,7 +216,6 @@ class ArabXN :
         val pageUrl = response.request.url.toString()
         val videoHeaders = headersBuilder()
             .set("Referer", pageUrl)
-            .set("Origin", baseUrl)
             .build()
 
         val fromSources = document.select("video#my-video source[src], video source[src]")

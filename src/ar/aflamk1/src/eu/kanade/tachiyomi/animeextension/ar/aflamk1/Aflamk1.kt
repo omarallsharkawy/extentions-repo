@@ -44,12 +44,6 @@ class Aflamk1 :
 
     override fun headersBuilder() = super.headersBuilder()
         .set("Referer", "$baseUrl/")
-        .set("Origin", baseUrl)
-        .set(
-            "User-Agent",
-            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 " +
-                "(KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
-        )
 
     // ============================== Popular ===============================
 
@@ -216,7 +210,6 @@ class Aflamk1 :
         val license = LICENSE_CODE.find(html)?.groupValues?.get(1)
         val videoHeaders = headersBuilder()
             .set("Referer", pageUrl)
-            .set("Origin", baseUrl)
             .build()
 
         val pairs = mutableListOf<Pair<String, String>>()

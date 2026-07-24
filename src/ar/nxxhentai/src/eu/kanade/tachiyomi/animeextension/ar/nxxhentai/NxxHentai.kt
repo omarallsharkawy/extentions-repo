@@ -18,7 +18,7 @@ import eu.kanade.tachiyomi.multisrc.dooplay.DooPlay
 import eu.kanade.tachiyomi.network.GET
 import eu.kanade.tachiyomi.network.POST
 import eu.kanade.tachiyomi.util.asJsoup
-import keiyoushi.utils.parallelCatchingFlatMapBlocking
+import kotlinx.coroutines.runBlocking
 import okhttp3.FormBody
 import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.Request
@@ -47,7 +47,6 @@ class NxxHentai :
         .set("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8")
         .set("Accept-Language", "ar,en-US;q=0.9,en;q=0.8")
         .set("Referer", "$baseUrl/")
-        .set("Origin", baseUrl)
 
     private val playlistUtils by lazy { PlaylistUtils(client, headers) }
     private val doodExtractor by lazy { DoodExtractor(client) }
@@ -359,19 +358,21 @@ class NxxHentai :
                 .replace("&amp;", "&")
             src.takeIf { isUsefulEmbed(it) }
         }.distinct()
-        videos += pageIframes.parallelCatchingFlatMapBlocking { extractFromEmbed(it, "Embed") }
+        pageIframes.forEach { embed ->
+            videos += runCatching { runBlocking { extractFromEmbed(embed, "Embed") } }.getOrDefault(emptyList())
+        }
 
         // 3) DooPlay ajax tabs
         val players = document.select(
             "ul#playeroptionsul li.dooplay_player_option, " +
                 "ul#playeroptionsul li[data-post], li.dooplay_player_option",
         )
-        videos += players.parallelCatchingFlatMapBlocking { player ->
+        players.forEach { player ->
             val name = player.selectFirst("span.title")?.text()?.trim()
                 ?: player.ownText().trim().ifBlank { "Server ${player.attr("data-nume")}" }
-            val embed = getPlayerUrl(player, pageUrl)
-                ?: return@parallelCatchingFlatMapBlocking emptyList()
-            extractFromEmbed(embed, name)
+            getPlayerUrl(player, pageUrl)?.let { embed ->
+                videos += runCatching { runBlocking { extractFromEmbed(embed, name) } }.getOrDefault(emptyList())
+            }
         }
 
         // 4) Download table /links/
@@ -386,14 +387,19 @@ class NxxHentai :
                 ?: a.attr("title").ifBlank { "Download" }
             href to label.trim()
         }.distinctBy { it.first }
-        videos += downloads.parallelCatchingFlatMapBlocking { (href, label) ->
-            val finalUrl = resolveRedirect(href)
-            if (finalUrl.isBlank() || (finalUrl == href && "/links/" in href)) {
-                // try parsing link page for embed/hoster
-                extractFromLinkPage(href, label)
-            } else {
-                extractFromEmbed(finalUrl, label)
-            }
+        downloads.forEach { (href, label) ->
+            val extracted = runCatching {
+                runBlocking {
+                    val finalUrl = resolveRedirect(href)
+                    if (finalUrl.isBlank() || (finalUrl == href && "/links/" in href)) {
+                        // Try parsing a link page if its redirect is protected or absent.
+                        extractFromLinkPage(href, label)
+                    } else {
+                        extractFromEmbed(finalUrl, label)
+                    }
+                }
+            }.getOrDefault(emptyList())
+            videos += extracted
         }
 
         var distinct = videos.distinctBy { it.url }

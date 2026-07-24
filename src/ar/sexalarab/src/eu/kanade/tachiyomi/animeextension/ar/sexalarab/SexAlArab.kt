@@ -44,12 +44,6 @@ class SexAlArab :
 
     override fun headersBuilder() = super.headersBuilder()
         .set("Referer", "$baseUrl/")
-        .set("Origin", baseUrl)
-        .set(
-            "User-Agent",
-            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 " +
-                "(KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
-        )
 
     // ============================== Popular ===============================
 
@@ -238,7 +232,6 @@ class SexAlArab :
         val license = LICENSE_CODE.find(html)?.groupValues?.get(1)
         val videoHeaders = headersBuilder()
             .set("Referer", pageUrl)
-            .set("Origin", baseUrl)
             .build()
 
         val pairs = mutableListOf<Pair<String, String>>()
@@ -246,7 +239,12 @@ class SexAlArab :
         FLASH_URL.findAll(html).forEach { m ->
             val key = m.groupValues[1]
             val url = m.groupValues[2]
-            if (url.isBlank() || url == "1" || (!url.contains("get_file") && !url.startsWith("function"))) {
+            if (url.isBlank() || url == "1" ||
+                (
+                    !url.contains("get_file") && !url.startsWith("function") &&
+                        !url.contains(".mp4", ignoreCase = true) && !url.contains(".m3u8", ignoreCase = true)
+                    )
+            ) {
                 return@forEach
             }
             val textKey = key + "_text"

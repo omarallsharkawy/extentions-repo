@@ -17,7 +17,6 @@ import eu.kanade.tachiyomi.network.GET
 import eu.kanade.tachiyomi.util.asJsoup
 import keiyoushi.utils.bodyString
 import keiyoushi.utils.getPreferencesLazy
-import keiyoushi.utils.parallelCatchingFlatMapBlocking
 import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.Request
 import okhttp3.Response
@@ -46,7 +45,6 @@ class SexMahali :
 
     override fun headersBuilder() = super.headersBuilder()
         .set("Referer", "$baseUrl/")
-        .set("Origin", baseUrl)
 
     // ============================== Popular ===============================
 
@@ -250,9 +248,11 @@ class SexMahali :
         val embeds = extractEmbedUrls(document, pageHtml)
         if (embeds.isEmpty()) return emptyList()
 
-        return embeds.distinct().parallelCatchingFlatMapBlocking { embedUrl ->
-            videosFromEmbed(embedUrl)
-        }
+        // Hosters throttle concurrent probes and the old parallel helper can be broken by
+        // R8.  A sequential probe also lets one failed server leave the remaining ones usable.
+        return embeds.distinct().flatMap { embedUrl ->
+            runCatching { videosFromEmbed(embedUrl) }.getOrDefault(emptyList())
+        }.distinctBy { it.url }
     }
 
     private fun extractEmbedUrls(document: Document, pageHtml: String): List<String> {

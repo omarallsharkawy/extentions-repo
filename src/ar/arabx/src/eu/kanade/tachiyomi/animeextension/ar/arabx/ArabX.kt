@@ -15,7 +15,6 @@ import eu.kanade.tachiyomi.util.asJsoup
 import keiyoushi.lib.jsunpacker.JsUnpacker
 import keiyoushi.utils.addListPreference
 import keiyoushi.utils.getPreferencesLazy
-import keiyoushi.utils.parallelCatchingFlatMapBlocking
 import okhttp3.Headers
 import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.Request
@@ -42,12 +41,6 @@ class ArabX :
 
     override fun headersBuilder(): Headers.Builder = super.headersBuilder()
         .set("Referer", "$baseUrl/")
-        .set("Origin", baseUrl)
-        .set(
-            "User-Agent",
-            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 " +
-                "(KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
-        )
 
     // ============================== Popular ===============================
 
@@ -249,7 +242,7 @@ class ArabX :
             .filter { it.isNotBlank() }
             .distinct()
 
-        videos += iframeSrcs.parallelCatchingFlatMapBlocking { iframe ->
+        videos += iframeSrcs.flatMap { iframe ->
             videosFromHoster(iframe, pageUrl)
         }
 
@@ -265,7 +258,6 @@ class ArabX :
     private fun videosFromHoster(embedUrl: String, pageUrl: String): List<Video> {
         val embedHeaders = headersBuilder()
             .set("Referer", pageUrl)
-            .set("Origin", baseUrl)
             .build()
         val html = runCatching {
             client.newCall(GET(embedUrl, embedHeaders)).execute().use { it.body.string() }
@@ -287,8 +279,24 @@ class ArabX :
         if (streams.isNotEmpty()) return streams
 
         // Nested iframe redirect
-        val nested = IFRAME_SRC_REGEX.findAll(html).map { it.groupValues[1] }.toList()
-        return nested.parallelCatchingFlatMapBlocking { videosFromHoster(it, embedUrl) }
+        // Resolve one nested player only.  Looping embeds are common on this host and
+        // recursive/parallel extraction caused empty host lists after minification.
+        val nested = IFRAME_SRC_REGEX.findAll(html)
+            .map { it.groupValues[1] }
+            .map { it.replace("\\/", "/") }
+            .firstOrNull { it.startsWith("http") }
+            ?: return emptyList()
+        return runCatching { videosFromHosterWithoutNesting(nested, embedUrl) }.getOrDefault(emptyList())
+    }
+
+    private fun videosFromHosterWithoutNesting(embedUrl: String, pageUrl: String): List<Video> {
+        val embedHeaders = headersBuilder().set("Referer", pageUrl).build()
+        val html = runCatching {
+            client.newCall(GET(embedUrl, embedHeaders)).execute().use { it.body.string() }
+        }.getOrNull().orEmpty()
+        if (html.isBlank()) return emptyList()
+        val unpacked = JsUnpacker.unpackAndCombine(html).orEmpty()
+        return extractDirectStreams("$html\n$unpacked", embedUrl, labelPrefix = "Playeriz")
     }
 
     private fun extractDirectStreams(html: String, referer: String, labelPrefix: String): List<Video> {

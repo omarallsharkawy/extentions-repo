@@ -15,7 +15,6 @@ import eu.kanade.tachiyomi.util.asJsoup
 import keiyoushi.lib.cookieinterceptor.CookieInterceptor
 import keiyoushi.utils.addListPreference
 import keiyoushi.utils.getPreferencesLazy
-import keiyoushi.utils.parallelCatchingFlatMapBlocking
 import keiyoushi.utils.parseAs
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.JsonArray
@@ -63,12 +62,6 @@ class PornHub :
 
     override fun headersBuilder(): Headers.Builder = super.headersBuilder()
         .set("Referer", "$baseUrl/")
-        .set("Origin", baseUrl)
-        .set(
-            "User-Agent",
-            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 " +
-                "(KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
-        )
 
     private val playlistUtils by lazy { PlaylistUtils(client, headers) }
 
@@ -115,12 +108,18 @@ class PornHub :
 
     override fun popularAnimeParse(response: Response): AnimesPage {
         val document = response.asJsoup()
+        requireNotChallenge(document)
         val animes = document.select(popularAnimeSelector())
             .map { popularAnimeFromElement(it) }
             .filter { it.url.isNotBlank() && it.title.isNotBlank() }
             .distinctBy { it.url }
         val isLastPage = document.selectFirst("li.page_next.page_disabled, li.page_next.disabled, li.next.disabled") != null
-        val hasNext = !isLastPage && (document.selectFirst(popularAnimeNextPageSelector()) != null || animes.size >= 20) && animes.isNotEmpty()
+        val nextUrl = document.selectFirst(popularAnimeNextPageSelector())
+            ?.let { next -> next.attr("abs:href").ifBlank { next.selectFirst("a[href]")?.attr("abs:href") } }
+            ?.takeIf { it.isNotBlank() && it != "#" }
+        // Do not infer another page merely from the item count. Redirects can otherwise
+        // serve the first 20 cards for every request and cause endless scrolling.
+        val hasNext = !isLastPage && nextUrl != null && nextUrl != response.request.url.toString() && animes.isNotEmpty()
         return AnimesPage(animes, hasNext)
     }
 
@@ -252,6 +251,7 @@ class PornHub :
         val html = response.body.string()
         val flashvars = extractFlashvars(html)
 
+        requireNotChallenge(org.jsoup.Jsoup.parse(html, pageUrl))
         assertPlayable(html, flashvars)
 
         val videoHeaders = headers.newBuilder()
@@ -303,8 +303,10 @@ class PornHub :
 
         // MP4 fallback via get_media XHR (returns JSON list of progressive qualities when available).
         if (videos.none { it.quality.contains("MP4", ignoreCase = true) } || videos.isEmpty()) {
-            val getMediaDefs = getMediaUrls.parallelCatchingFlatMapBlocking { mediaUrl ->
-                fetchGetMedia(mediaUrl, pageUrl)
+            // Keep tokenized requests sequential: the site can rotate the media token and
+            // the legacy parallel helper is not safe after the extension is R8-optimised.
+            val getMediaDefs = getMediaUrls.flatMap { mediaUrl ->
+                runCatching { fetchGetMedia(mediaUrl, pageUrl) }.getOrDefault(emptyList())
             }
             for (def in getMediaDefs) {
                 val mp4 = def.resolvedUrl() ?: continue
@@ -629,6 +631,18 @@ class PornHub :
         }
         if (REMOVED.any { it in html }) {
             throw Exception("Video removed or disabled")
+        }
+    }
+
+    private fun requireNotChallenge(document: Document) {
+        val html = document.html()
+        if (
+            html.contains("cf-browser-verification", ignoreCase = true) ||
+            html.contains("challenges.cloudflare.com", ignoreCase = true) ||
+            html.contains("Just a moment", ignoreCase = true) ||
+            html.contains("Verifying you are human", ignoreCase = true)
+        ) {
+            throw Exception("Cloudflare challenge detected. Open this source in WebView once, then retry.")
         }
     }
 
